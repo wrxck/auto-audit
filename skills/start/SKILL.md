@@ -1,7 +1,7 @@
 ---
 name: start
 description: "Autonomously audit a GitHub repo. Clones the repo, runs a full audit scan (security by default), then kicks off a continuous loop that triages findings, writes proofs of concept, fixes issues in PRs, independently reviews, and merges. Use when the user says things like 'audit my repo', 'scan repo X for security issues', 'start auto-audit on <repo>'."
-argument-hint: "<repo-url> [modules=security] [merge-policy=auto|manual]"
+argument-hint: "<repo-url> [modules=security] [merge-policy=manual|auto]"
 allowed-tools: "Bash Read Edit Write Glob Grep Agent"
 ---
 
@@ -13,7 +13,7 @@ You are the orchestrator. Your job is to **set up** the audit then **kick off** 
 
 - `$1` (required): GitHub repo URL — e.g. `https://github.com/wrxck/my-app` or `git@github.com:wrxck/my-app.git` or `owner/name` shorthand.
 - `$2` (optional, default `security`): comma-separated modules to run. Today only `security` is implemented. Future: `accessibility`, `performance`.
-- `$3` (optional, default `auto`): merge policy. `auto` = auto-merge on positive independent review. `manual` = leave PR open for human review.
+- `$3` (optional, default `manual`): merge policy. `manual` = leave PR open for human review (default, recommended). `auto` = auto-merge on positive independent review — opt-in only, review the security section in the README before using this on any repo you do not fully trust.
 
 If `$1` is missing, tell the user the usage and stop.
 
@@ -28,7 +28,7 @@ if [[ "$REPO_URL" != *://* && "$REPO_URL" != git@* ]]; then
   REPO_URL="https://github.com/$REPO_URL"
 fi
 MODULES="${2:-security}"
-MERGE_POLICY="${3:-auto}"
+MERGE_POLICY="${3:-manual}"
 
 # only security is implemented today; reject others loudly so the user does
 # not think a stub module is doing something.
