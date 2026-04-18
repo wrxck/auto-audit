@@ -1,5 +1,7 @@
 # auto-audit
 
+[![CI](https://github.com/wrxck/auto-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/wrxck/auto-audit/actions/workflows/ci.yml)
+
 An autonomous auditor for Claude Code. Point it at a GitHub repo; it scans for security vulnerabilities, triages false positives, writes a proof of concept, fixes each confirmed bug in its own PR, independently reviews the fix, and merges when the review is clean. It keeps doing that until the queue is drained, then rescans, until you stop it or the session ends.
 
 Modular by design: `audit-security` is the only live module today. `audit-accessibility` and `audit-performance` exist as stub skills that error out until someone fills them in — see the extension section below.
