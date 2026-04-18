@@ -9,6 +9,8 @@
 
 # shellcheck disable=SC1091
 source "${BASH_SOURCE%/*}/common.sh"
+# shellcheck disable=SC1091
+source "${BASH_SOURCE%/*}/guards.sh"
 
 finding_file() {
   local id="$1"
@@ -100,6 +102,13 @@ finding_list_by_status() {
 finding_update_status() {
   local id="$1" new_status="$2" note="${3:-}"
   local f; f="$(finding_file "$id")"
+  [ -f "$f" ] || die "finding_update_status: no such finding: $id"
+  local old_status
+  old_status="$(jq -r '.status // "discovered"' "$f")"
+  # Mechanically reject any transition not in the allowed edge set. An
+  # agent that tries to skip stages (e.g. discovered -> fix_committed) is
+  # refused before its update lands.
+  guard_status_transition "$old_status" "$new_status"
   local now; now="$(date -u +%FT%TZ)"
   local tmp; tmp="$(mktemp)"
   jq --arg s "$new_status" --arg at "$now" --arg note "$note" \

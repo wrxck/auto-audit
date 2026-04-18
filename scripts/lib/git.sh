@@ -4,6 +4,8 @@
 # ssh-agent reachable via SSH_AUTH_SOCK if the user pushes over SSH).
 # shellcheck disable=SC1091
 source "${BASH_SOURCE%/*}/common.sh"
+# shellcheck disable=SC1091
+source "${BASH_SOURCE%/*}/guards.sh"
 
 ensure_clone() {
   # usage: ensure_clone <repo_url> [branch]
@@ -64,33 +66,34 @@ commit_all() {
   # usage: commit_all <finding_id> <subject> [body]
   local fid="$1" subject="$2" body="${3:-}"
   local ws; ws="$(workspace_dir)"
-  # Safety: must be on an autoaudit/* branch. Never add/commit while on the
-  # default branch — the fixer role card enforces this too, but belt-and-braces.
+  # Belt-and-braces: enforce every invariant before touching the index.
   local cur; cur="$(git -C "$ws" rev-parse --abbrev-ref HEAD)"
-  [[ "$cur" == autoaudit/* ]] || die "commit_all: refusing to commit on non-autoaudit branch '$cur'"
+  guard_autoaudit_branch "$cur" "current HEAD"
+  guard_not_default_branch "$ws"
   git -C "$ws" add -A 1>&2
-  if git -C "$ws" diff --cached --quiet; then
-    err "nothing to commit for $fid"
-    return 2
-  fi
+  guard_diff_not_empty "$ws"
+  guard_no_poc_in_diff "$ws"
+  guard_no_submodule_change "$ws"
+  guard_no_secrets_in_diff "$ws"
+  guard_max_files_changed "$ws"
+  guard_max_lines_changed "$ws"
   local full
   if [ -n "$body" ]; then
     full="${subject}"$'\n\n'"${body}"
   else
     full="$subject"
   fi
+  guard_commit_msg_size "$full"
+  guard_commit_msg_clean "$full"
   git -C "$ws" commit -m "$full" 1>&2
   git -C "$ws" rev-parse HEAD
 }
 
 push_branch() {
   # usage: push_branch <branch>
-  # Refuses to push anything outside the autoaudit/* namespace. This is a
-  # hard guarantee the plugin never touches main/develop/etc., even if a
-  # corrupted finding JSON somehow puts an attacker-chosen branch name in
-  # .fix.branch.
   local branch="$1"
-  [[ "$branch" == autoaudit/* ]] || die "push_branch: refusing to push non-autoaudit branch '$branch'"
+  guard_autoaudit_branch "$branch" "push target"
+  guard_gh_authenticated
   local ws; ws="$(workspace_dir)"
   # --force-with-lease is safe on autoaudit/* branches (plugin owns them);
   # it prevents overwriting someone else's push if the ref moved since we fetched.
@@ -100,13 +103,12 @@ push_branch() {
 pr_open() {
   # usage: pr_open <branch> <title> <body_file>
   # Idempotent: if a PR already exists for <branch> (any state), return it
-  # instead of trying to create a duplicate. This matters because a crash
-  # between `gh pr create` succeeding and the state write leaves the finding
-  # at status `fix_committed` with a PR already on the branch; a retry would
-  # otherwise hit `gh pr create` and fail permanently.
+  # instead of trying to create a duplicate.
   local branch="$1" title="$2" body_file="$3"
+  guard_autoaudit_branch "$branch" "PR head"
+  guard_pr_body_clean "$body_file"
+  guard_gh_authenticated
   local ws; ws="$(workspace_dir)"
-  [ -f "$body_file" ] || die "pr_open: body file missing: $body_file"
   local existing
   existing="$(cd "$ws" && gh pr list --head "$branch" --state all --json url,number --jq '.[0] // empty' 2>/dev/null || true)"
   if [ -n "$existing" ]; then
