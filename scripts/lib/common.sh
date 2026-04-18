@@ -72,6 +72,16 @@ need git
 need gh
 need flock
 
+# Portable timestamp -> epoch. GNU date supports `date -d`, BSD/macOS needs
+# `date -j -f <fmt>`. Feed an ISO-8601-ish "%FT%TZ" string.
+iso_to_epoch() {
+  local ts="$1"
+  # Try GNU first; fall back to BSD. Echo 0 if both fail (caller decides).
+  date -u -d "$ts" +%s 2>/dev/null \
+    || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" +%s 2>/dev/null \
+    || echo 0
+}
+
 # gh must also be authenticated. Check once per process rather than on
 # every source — AUTO_AUDIT_GH_AUTH_OK is a cheap in-process cache.
 if [ -z "${AUTO_AUDIT_GH_AUTH_OK:-}" ]; then

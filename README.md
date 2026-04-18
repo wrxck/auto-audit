@@ -125,20 +125,33 @@ You need four command-line tools and one auth step. The plugin checks on every i
 
 | Tool | Why | Check |
 |---|---|---|
+| `bash` ≥ 4.0 | most shell scripts use modern bash features | `bash --version` |
 | `gh` | opens PRs, reviews, merges | `gh --version` |
 | `git` | clones the target repo, commits fixes | `git --version` |
 | `jq` | parses all state files | `jq --version` |
 | `flock` | serialises concurrent writes (part of `util-linux`) | `flock --version` |
+
+### Platform support
+
+| OS | Status |
+|---|---|
+| Linux (any major distro) | first-class; no setup beyond the package-install block below |
+| macOS | supported; needs Homebrew to pick up a modern bash (system ships 3.2) and put `flock` on PATH |
+| Windows | run inside **WSL2** — the plugin is bash-only and targets POSIX path semantics |
 
 ### Install on a fresh machine
 
 **macOS (Homebrew):**
 
 ```bash
-brew install gh git jq util-linux
-# util-linux's flock isn't on PATH by default on macOS — add it:
-echo 'export PATH="$(brew --prefix util-linux)/sbin:$PATH"' >> ~/.zshrc
+brew install bash gh git jq util-linux
+# util-linux's flock isn't on PATH by default on macOS — add it, plus the modern bash:
+cat >> ~/.zshrc <<'EOF'
+export PATH="$(brew --prefix)/bin:$(brew --prefix util-linux)/sbin:$PATH"
+EOF
 source ~/.zshrc
+# verify the right bash is first on PATH:
+bash --version    # must be 4.x or 5.x, not 3.2
 ```
 
 **Debian / Ubuntu:**
