@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile all Python files
+        run: |
+          pyfiles=$(find . -name '*.py' -not -path './node_modules/*' -not -path './.git/*' -not -path './.venv/*' 2>/dev/null || true)
+          if [ -n "$pyfiles" ]; then
+            echo "$pyfiles" | xargs -r python -m py_compile
+            echo "OK: Python compiles"
+          else
+            echo "(no Python files)"
+          fi
+
+      - name: Validate all JSON files
+        run: |
+          jsonfiles=$(find . -name '*.json' -not -path './node_modules/*' -not -path './.git/*' -not -path './coverage/*' 2>/dev/null || true)
+          if [ -n "$jsonfiles" ]; then
+            for f in $jsonfiles; do
+              python -c "import json; json.load(open('$f'))" || { echo "BAD: $f"; exit 1; }
+            done
+            echo "OK: JSON valid"
+          else
+            echo "(no JSON files)"
+          fi
+
+      - name: Syntax-check shell scripts
+        run: |
+          shfiles=$(find . -name '*.sh' -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null || true)
+          if [ -n "$shfiles" ]; then
+            for f in $shfiles; do bash -n "$f" || { echo "BAD: $f"; exit 1; }; done
+            echo "OK: shell syntax"
+          else
+            echo "(no shell files)"
+          fi
+
+      - name: Set up Node (if package.json present)
+        if: hashFiles('**/package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install node deps + run tests
+        if: hashFiles('**/package.json') != ''
+        run: |
+          for pkg in $(find . -name 'package.json' -not -path '*/node_modules/*' -not -path './.git/*'); do
+            dir=$(dirname "$pkg")
+            echo "=== $dir ==="
+            pushd "$dir" > /dev/null
+            if [ -f package-lock.json ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+            if [ "$(node -p "require('./package.json').scripts && (require('./package.json').scripts.test || '')")" != "" ]; then
+              npm test --if-present
+            fi
+            popd > /dev/null
+          done
