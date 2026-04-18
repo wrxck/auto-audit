@@ -72,38 +72,94 @@ Findings with matching `file`, `line`, and `title` are dropped on second insert.
 
 One file per finding at `${CLAUDE_PLUGIN_DATA}/repos/<slug>/findings/<id>.json`, plus an append-only `iterations.jsonl`. No database — easy to inspect, diff, or hand-edit.
 
-## Install (local dev)
+## Install
 
-```bash
-# clone or copy the plugin into a convenient path
-cp -r /path/to/auto-audit ~/auto-audit  # (or wherever)
+The plugin is distributed through a Claude Code plugin marketplace. If you maintain your own marketplace, add an entry pointing at `https://github.com/<owner>/auto-audit.git`, then from Claude Code:
 
-# start claude code with the plugin loaded
-claude --plugin-dir ~/auto-audit
+```
+/plugin marketplace update <your-marketplace>
+/plugin install auto-audit@<your-marketplace>
 ```
 
-Confirm it is loaded:
+Confirm it loaded:
 
 ```
 /plugin list
 ```
 
-You should see `auto-audit` and the five skills (`start`, `tick`, `status`, `resume`, `stop`).
-
-## Install (as a marketplace plugin)
-
-```
-/plugin install auto-audit@<your-marketplace>
-```
-
-The plugin has no `marketplace.json` yet; publish that when ready.
+You should see `auto-audit` and its skills (`start`, `tick`, `status`, `resume`, `stop`).
 
 ## Requirements
 
-- `gh` CLI, authenticated (`gh auth status` must succeed)
-- `git`, `jq`
-- A working git push path to GitHub. If you push over SSH, make sure an agent holding your GitHub key is reachable — on this author's machines that's `/tmp/fleet-ssh-agent.sock`; elsewhere the plugin just inherits whatever `SSH_AUTH_SOCK` is set in your shell.
-- Write access to the target repo (so `gh pr create` and `gh pr merge` work)
+You need four command-line tools and one auth step. The plugin checks on every invocation and prints copy-paste install commands if anything is missing.
+
+| Tool | Why | Check |
+|---|---|---|
+| `gh` | opens PRs, reviews, merges | `gh --version` |
+| `git` | clones the target repo, commits fixes | `git --version` |
+| `jq` | parses all state files | `jq --version` |
+| `flock` | serialises concurrent writes (part of `util-linux`) | `flock --version` |
+
+### Install on a fresh machine
+
+**macOS (Homebrew):**
+
+```bash
+brew install gh git jq util-linux
+# util-linux's flock isn't on PATH by default on macOS — add it:
+echo 'export PATH="$(brew --prefix util-linux)/sbin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+**Debian / Ubuntu:**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y gh git jq util-linux
+```
+
+If `gh` isn't in your apt sources yet, follow the one-time step at <https://github.com/cli/cli/blob/trunk/docs/install_linux.md>.
+
+**Fedora / RHEL:**
+
+```bash
+sudo dnf install -y gh git jq util-linux
+```
+
+**Arch:**
+
+```bash
+sudo pacman -S --needed github-cli git jq util-linux
+```
+
+**Alpine:**
+
+```bash
+sudo apk add --no-cache github-cli git jq util-linux-misc
+```
+
+### Authenticate gh (one-time)
+
+```bash
+gh auth login
+```
+
+Pick:
+- **GitHub.com**
+- **HTTPS** (recommended — works without ssh-agent)
+- **Login with a web browser**
+
+Confirm it stuck:
+
+```bash
+gh auth status
+```
+
+You need a token with at least `repo` scope. `gh auth login` gives you that by default. If you're scripting and want to use a PAT instead, `gh auth login --with-token < mytoken.txt` works too.
+
+### Access to the target repo
+
+The account you authenticated as needs write access to whichever repo you point auto-audit at, so it can push branches, open PRs, and merge them. For your own repos this is automatic. For a repo you don't own, you'll need to be a collaborator.
 
 ## Extending with a new audit module
 
@@ -144,7 +200,7 @@ ${CLAUDE_PLUGIN_DATA}/
 ## When something goes wrong
 
 - **`no active repo`** — run `/auto-audit:start <url>` first. If you stopped earlier, `/auto-audit:resume` will re-point to the last active repo.
-- **gh push fails** — the shared `scripts/lib/common.sh` sets `SSH_AUTH_SOCK=/tmp/fleet-ssh-agent.sock` only when that socket exists; otherwise it inherits the shell's value. Verify the agent is running (`ls -l /tmp/fleet-ssh-agent.sock` or `ssh-add -l`). See the fleet notes in `~/.claude/CLAUDE.md` if you need to recreate the agent.
+- **gh push fails** — `gh auth status` should report a logged-in account with `repo` scope. If you push over SSH, `ssh-add -l` should list your GitHub key; if it's empty, start an agent and re-add.
 - **loop seems stuck** — `/auto-audit:status` to check. If a tick is mid-flight and errored, the finding will usually be left at an intermediate status; the next tick re-tries. If a finding cycles between `confirmed` and `pr_rejected` forever, it will hit `max_fix_iterations` and be marked `failed`.
 - **false positive flood** — lower severity threshold in `audit-security/SKILL.md` or add regex exclusions. The LLM scanner is deliberately tuned to prefer recall over precision; the triage subagent trims aggressively.
 
