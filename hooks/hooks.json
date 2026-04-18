@@ -1,0 +1,17 @@
+{
+  "description": "auto-audit hooks: nudges the user on SessionStart if an audit is mid-flight, and persists iteration markers on Stop.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "resume|startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
