@@ -4,37 +4,110 @@
 set -euo pipefail
 
 : "${CLAUDE_PLUGIN_DATA:=$HOME/.claude/plugins/data/auto-audit}"
-: "${CLAUDE_PLUGIN_ROOT:=$HOME/auto-audit}"
+: "${CLAUDE_PLUGIN_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 export AUTO_AUDIT_DATA="$CLAUDE_PLUGIN_DATA"
 export AUTO_AUDIT_ROOT="$CLAUDE_PLUGIN_ROOT"
 mkdir -p "$AUTO_AUDIT_DATA/repos"
 
-# SSH agent — required for github pushes (see ~/.claude startup hook)
-if [ -S /tmp/fleet-ssh-agent.sock ]; then
-  export SSH_AUTH_SOCK=/tmp/fleet-ssh-agent.sock
-fi
+# Git pushes use whatever credentials gh/git already have configured. The
+# plugin does not manage an ssh-agent for you. If you push over HTTPS (the
+# default for `gh auth login`), nothing extra is needed. If you push over
+# SSH, make sure SSH_AUTH_SOCK is set in your shell before invoking Claude
+# Code so child processes inherit it.
 
 log()  { printf '[auto-audit %s] %s\n' "$(date -u +%H:%M:%SZ)" "$*" >&2; }
 err()  { printf '[auto-audit ERROR] %s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
 
-need() { command -v "$1" >/dev/null || die "missing dep: $1"; }
+# Dependency check with platform-aware install hints. If something is
+# missing, tell the user exactly how to install it on macOS / Debian /
+# Fedora / Arch / Alpine — no guessing required.
+_install_hint() {
+  local pkg="$1" brew="${2:-$pkg}" apt="${3:-$pkg}" dnf="${4:-$pkg}" pacman="${5:-$pkg}" apk="${6:-$pkg}"
+  cat >&2 <<HINT
+  macOS (Homebrew):  brew install $brew
+  Debian / Ubuntu:   sudo apt-get update && sudo apt-get install -y $apt
+  Fedora / RHEL:     sudo dnf install -y $dnf
+  Arch:              sudo pacman -S --needed $pacman
+  Alpine:            sudo apk add --no-cache $apk
+HINT
+}
+need() {
+  local cmd="$1"
+  command -v "$cmd" >/dev/null 2>&1 && return 0
+  err "missing required command: $cmd"
+  case "$cmd" in
+    jq)  _install_hint jq ;;
+    git) _install_hint git ;;
+    gh)  _install_hint gh gh gh gh github-cli github-cli
+         err "after installing, run:  gh auth login   (choose GitHub.com + HTTPS + browser)" ;;
+    flock)
+         err "flock(1) is part of util-linux."
+         cat >&2 <<HINT
+  macOS:             brew install util-linux   # then add to your shell rc:
+                     export PATH="\$(brew --prefix util-linux)/sbin:\$PATH"
+  Debian / Ubuntu:   already installed with util-linux (apt-get install util-linux)
+  Fedora / RHEL:     sudo dnf install -y util-linux
+  Arch:              already installed with util-linux
+  Alpine:            sudo apk add --no-cache util-linux-misc
+HINT
+         ;;
+    *)   err "install '$cmd' using your system's package manager." ;;
+  esac
+  exit 1
+}
 need jq
 need git
 need gh
+need flock
+
+# gh must also be authenticated. Check once per process rather than on
+# every source — AUTO_AUDIT_GH_AUTH_OK is a cheap in-process cache.
+if [ -z "${AUTO_AUDIT_GH_AUTH_OK:-}" ]; then
+  if ! gh auth status >/dev/null 2>&1; then
+    err "gh is installed but not authenticated."
+    err "run:  gh auth login   (choose GitHub.com, HTTPS, authenticate via browser)"
+    exit 1
+  fi
+  export AUTO_AUDIT_GH_AUTH_OK=1
+fi
 
 # repo slug from url: owner/name -> owner--name
+# Accepts:
+#   https://github.com/owner/name(.git)?
+#   git@github.com:owner/name(.git)?
+#   owner/name   (shorthand — caller should have already prefixed https://github.com/)
+# Rejects anything else so path-traversal and non-github URLs cannot slip through.
 slugify() {
   local url="$1"
-  # strip protocol + .git
-  url="${url#https://github.com/}"
-  url="${url#git@github.com:}"
-  url="${url%.git}"
-  printf '%s' "${url//\//--}"
+  local path=""
+  case "$url" in
+    https://github.com/*) path="${url#https://github.com/}" ;;
+    git@github.com:*)     path="${url#git@github.com:}" ;;
+    *)
+      die "refusing non-GitHub URL: $url (expected https://github.com/owner/name or git@github.com:owner/name)" ;;
+  esac
+  path="${path%.git}"
+  path="${path%/}"
+  # must be exactly owner/name — one slash, no dots, no traversal
+  case "$path" in
+    */*/*|*..*|*/|/*|"") die "malformed GitHub repo path: '$path'" ;;
+    */*)                 ;;
+    *)                   die "malformed GitHub repo path: '$path' (expected owner/name)" ;;
+  esac
+  printf '%s' "${path//\//--}"
 }
 
+# Resolve the slug to operate on. Prefers AUTO_AUDIT_SLUG (pinned by the
+# tick at entry) over active.json — this prevents a concurrent
+# /auto-audit:start from redirecting shared-helper writes to a different
+# repo mid-tick.
 active_slug() {
+  if [ -n "${AUTO_AUDIT_SLUG:-}" ]; then
+    printf '%s' "$AUTO_AUDIT_SLUG"
+    return 0
+  fi
   local f="$AUTO_AUDIT_DATA/active.json"
   [ -f "$f" ] || { err "no active repo; run /auto-audit:start <repo>"; return 1; }
   jq -r '.slug' "$f"
@@ -68,24 +141,40 @@ iterations_log() {
 }
 
 lock_file() {
-  # pass the slug explicitly so the lock path is stable for the whole tick,
-  # even if active.json is overwritten mid-run by a concurrent start.
   local slug="${1:?lock_file: slug required}"
   printf '%s/repos/%s/tick.lock' "$AUTO_AUDIT_DATA" "$slug"
 }
 
+# Atomic, non-blocking tick lock using flock(1). Exits immediately if another
+# tick on the same slug is running. Stale locks caused by a hard-killed
+# process are released by the kernel when the holder's fd closes — no manual
+# staleness timer, no check-then-write race.
 with_lock() {
-  # usage: with_lock <slug>
   local slug="${1:?with_lock: slug required}"
   local lock; lock="$(lock_file "$slug")"
-  if [ -f "$lock" ]; then
-    local age_s=$(( $(date +%s) - $(stat -c %Y "$lock" 2>/dev/null || echo 0) ))
-    if [ "$age_s" -lt 900 ]; then
-      die "lock held ($(cat "$lock" 2>/dev/null)); another tick in progress. Wait or delete $lock after verifying."
-    fi
-    log "stale lock ($age_s s old) — taking over"
-    rm -f "$lock"
+  mkdir -p "$(dirname "$lock")"
+  # Open fd 9 on the lock file and flock it non-blocking. If someone else
+  # holds it, exit 0 so the tick is a no-op (the next /loop iteration will
+  # try again). Dying with a non-zero status would make /loop back off too
+  # aggressively and miss legitimate work.
+  exec 9>"$lock"
+  if ! flock -n 9; then
+    log "tick lock held by another process on slug=$slug — skipping"
+    exit 0
   fi
-  printf 'pid=%s slug=%s started=%s\n' "$$" "$slug" "$(date -u +%FT%TZ)" > "$lock"
-  trap 'rm -f '"'$lock'" EXIT
+  printf 'pid=%s slug=%s started=%s\n' "$$" "$slug" "$(date -u +%FT%TZ)" >&9
+  # fd 9 stays open for the life of this process; flock releases on exit.
+  export AUTO_AUDIT_SLUG="$slug"
+}
+
+# Serialised append to iterations.jsonl so concurrent writers don't
+# interleave half-lines. Cheap flock on a sidecar; no coordination needed
+# beyond the one call site.
+iterations_append_raw() {
+  local path="$1" line="$2"
+  mkdir -p "$(dirname "$path")"
+  (
+    flock -x 200
+    printf '%s\n' "$line" >> "$path"
+  ) 200>"$path.lock"
 }

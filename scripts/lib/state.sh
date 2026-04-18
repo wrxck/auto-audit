@@ -15,17 +15,25 @@ finding_file() {
   printf '%s/%s.json' "$(findings_dir)" "$id"
 }
 
-finding_next_id() {
+# Allocate the next ID + create the finding file atomically. Holding a flock
+# on the findings dir prevents two concurrent `add-findings.sh` invocations
+# (e.g. initial scan + a rescan) from returning the same ID and clobbering
+# each other.
+_finding_next_id_unlocked() {
   local prefix="$1"
-  mkdir -p "$(findings_dir)"
   local n=0
-  for f in "$(findings_dir)"/"$prefix"-*.json; do
-    [ -f "$f" ] || continue
+  local dir; dir="$(findings_dir)"
+  shopt -s nullglob
+  local files=("$dir"/"$prefix"-*.json)
+  shopt -u nullglob
+  local f
+  for f in "${files[@]}"; do
     local id="${f##*/}"
     id="${id%.json}"
     local num="${id#"$prefix"-}"
-    num="${num#0}"; num="${num#0}"; num="${num#0}"
-    [ -n "$num" ] && [ "$num" -gt "$n" ] 2>/dev/null && n=$num
+    # 10# forces base-10 parsing so "0042" isn't interpreted as octal.
+    num=$((10#$num))
+    [ "$num" -gt "$n" ] && n=$num
   done
   printf '%s-%04d' "$prefix" "$((n+1))"
 }
@@ -40,23 +48,30 @@ finding_create() {
     performance) prefix="PERF" ;;
     *) prefix="GEN" ;;
   esac
-  local id; id="$(finding_next_id "$prefix")"
-  local now; now="$(date -u +%FT%TZ)"
-  mkdir -p "$(findings_dir)"
-  jq -n \
-    --arg id "$id" --arg module "$module" --arg cat "$category" --arg sev "$severity" \
-    --arg title "$title" --arg file "$file" --argjson line "${line:-0}" \
-    --arg desc "$desc" --arg snip "$snippet" --arg now "$now" \
-    '{
-      id: $id, module: $module, category: $cat, severity: $sev,
-      status: "discovered",
-      title: $title, file: $file, line: $line,
-      description: $desc, code_snippet: $snip,
-      triage: null, poc: null, fix: null, pr: null, review: null, merge: null,
-      discovered_at: $now,
-      history: [ {at: $now, to: "discovered", note: "created"} ]
-    }' > "$(finding_file "$id")"
-  printf '%s' "$id"
+  local dir; dir="$(findings_dir)"
+  mkdir -p "$dir"
+  # Allocate id + write placeholder under flock so concurrent allocators
+  # can't race to the same number.
+  (
+    flock -x 200
+    local id now
+    id="$(_finding_next_id_unlocked "$prefix")"
+    now="$(date -u +%FT%TZ)"
+    jq -n \
+      --arg id "$id" --arg module "$module" --arg cat "$category" --arg sev "$severity" \
+      --arg title "$title" --arg file "$file" --argjson line "${line:-0}" \
+      --arg desc "$desc" --arg snip "$snippet" --arg now "$now" \
+      '{
+        id: $id, module: $module, category: $cat, severity: $sev,
+        status: "discovered",
+        title: $title, file: $file, line: $line,
+        description: $desc, code_snippet: $snip,
+        triage: null, poc: null, fix: null, pr: null, review: null, merge: null,
+        discovered_at: $now,
+        history: [ {at: $now, to: "discovered", note: "created"} ]
+      }' > "$dir/$id.json"
+    printf '%s' "$id"
+  ) 200>"$dir/.id.lock"
 }
 
 finding_get() {
@@ -94,16 +109,26 @@ finding_update_status() {
 
 finding_set_field() {
   # usage: finding_set_field <id> <top_level_key> <json_value>
-  # key is a simple identifier; avoids jq filter injection.
+  # key must be a simple identifier — avoids jq filter injection.
   local id="$1" key="$2" value="$3"
   [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || die "finding_set_field: invalid key '$key'"
+  [ -n "$value" ] || die "finding_set_field: empty value for key '$key' (would crash jq --argjson)"
+  # Validate that $value parses as JSON before feeding to --argjson. If an
+  # upstream helper returned an empty string on failure, fail loudly here
+  # rather than letting jq die with a cryptic error.
+  printf '%s' "$value" | jq -e . >/dev/null 2>&1 || die "finding_set_field: value for '$key' is not valid JSON: $value"
   local f; f="$(finding_file "$id")"
   local tmp; tmp="$(mktemp)"
   jq --arg k "$key" --argjson v "$value" '.[$k] = $v' "$f" > "$tmp" && mv "$tmp" "$f"
 }
 
-# pick next finding to work on, priority: highest severity, oldest first.
-# only returns findings that are actionable (not terminal).
+# Pick next finding to work on, priority: highest severity, oldest first.
+# Returns findings that are either at an entry state (discovered, confirmed,
+# poc_written, fix_committed, pr_opened, pr_rejected, pr_approved) or stuck
+# at an intermediate state (triaging, poc_writing, fixing, reviewing) —
+# because a crashed subagent may have left the finding at an intermediate
+# status, and the tick's dispatch table recovers these back to the matching
+# entry state.
 finding_next_pending() {
   finding_list | jq -r '
     def rank(s): if s=="critical" then 0
@@ -119,9 +144,10 @@ iterations_append() {
   # usage: iterations_append <event> <finding_id> <note>
   local event="$1" fid="${2:-}" note="${3:-}"
   mkdir -p "$(repo_dir)"
-  jq -cn --arg at "$(date -u +%FT%TZ)" --arg e "$event" --arg fid "$fid" --arg note "$note" \
-    '{at:$at, event:$e, finding_id:$fid, note:$note}' \
-    >> "$(iterations_log)"
+  local line
+  line="$(jq -cn --arg at "$(date -u +%FT%TZ)" --arg e "$event" --arg fid "$fid" --arg note "$note" \
+    '{at:$at, event:$e, finding_id:$fid, note:$note}')"
+  iterations_append_raw "$(iterations_log)" "$line"
 }
 
 stats() {
