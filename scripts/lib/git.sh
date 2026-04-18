@@ -52,7 +52,9 @@ new_branch() {
   local fid="$1"
   local ws; ws="$(workspace_dir)"
   local base; base="$(default_branch)"
-  local branch="autoaudit/${fid,,}"
+  # ${fid,,} is bash 4+ only (breaks on macOS's stock bash 3.2). tr is portable.
+  local branch
+  branch="autoaudit/$(printf '%s' "$fid" | tr '[:upper:]' '[:lower:]')"
   git -C "$ws" fetch origin "$base" 1>&2
   git -C "$ws" checkout "$base" 1>&2
   git -C "$ws" reset --hard "origin/$base" 1>&2

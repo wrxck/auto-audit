@@ -54,7 +54,7 @@ if [ -z "$NEXT_ID" ]; then
   LAST_SCAN="$(jq -s 'map(select(.event=="rescan_complete")) | last | .at // ""' "$(iterations_log)" 2>/dev/null | tr -d '"' || true)"
   SHOULD_RESCAN=1
   if [ -n "$LAST_SCAN" ] && [ "$LAST_SCAN" != "null" ]; then
-    AGE=$(( $(date -u +%s) - $(date -d "$LAST_SCAN" +%s 2>/dev/null || echo 0) ))
+    AGE=$(( $(date -u +%s) - $(iso_to_epoch "$LAST_SCAN") ))
     [ "$AGE" -lt 3600 ] && SHOULD_RESCAN=0
   fi
   if [ "$MERGED" -ge "$THRESHOLD" ] && [ "$SHOULD_RESCAN" -eq 1 ]; then
