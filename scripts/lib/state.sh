@@ -46,8 +46,8 @@ finding_create() {
   local prefix
   case "$module" in
     security) prefix="SEC" ;;
-    accessibility) prefix="A11Y" ;;
-    performance) prefix="PERF" ;;
+    # Future modules should add their prefix here (see README "Extending
+    # with a new audit module" for the contract).
     *) prefix="GEN" ;;
   esac
   local dir; dir="$(findings_dir)"
