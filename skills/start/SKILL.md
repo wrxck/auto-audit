@@ -19,10 +19,9 @@ If `$1` is missing, tell the user the usage and stop.
 
 ## Phase 1 — bootstrap
 
-Run the init script to clone the repo and write config:
+Run the init script to clone the repo and write config. The script uses whatever git/`gh` credentials are already configured in the environment — typically the HTTPS oauth token from `gh auth login`. No extra ssh-agent setup is required.
 
 ```bash
-export SSH_AUTH_SOCK=/tmp/fleet-ssh-agent.sock
 REPO_URL="$1"
 # normalise shorthand owner/name -> full url
 if [[ "$REPO_URL" != *://* && "$REPO_URL" != git@* ]]; then
@@ -90,7 +89,6 @@ Then tell the user in one line: "autonomous audit running — `/auto-audit:statu
 ## Safety
 
 - Never run the init if the user didn't supply a repo URL.
-- Always export `SSH_AUTH_SOCK` before any git/gh operation.
 - If `gh auth status` fails, report it and stop — don't try to proceed.
 - Never commit or push here; that's the tick skill's job.
 - Do not make up or invent a repo URL — require user input.
