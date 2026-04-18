@@ -9,7 +9,7 @@ source "${BASH_SOURCE%/*}/lib/git.sh"
 
 url="${1:-}"
 modules="${2:-security}"
-merge_policy="${3:-auto}"
+merge_policy="${3:-manual}"
 
 [ -n "$url" ] || die "usage: init-workspace.sh <repo_url> [modules] [merge_policy]"
 case "$merge_policy" in auto|manual) ;; *) die "merge_policy must be auto|manual, got $merge_policy" ;; esac
@@ -54,6 +54,8 @@ jq -n \
     merge_policy: $merge,
     max_fix_iterations: 3,
     rescan_after_n_merges: 5,
+    sandbox_mode: "strict",
+    allow_network_for_repos: [],
     initialised_at: $now
   }' > "$AUTO_AUDIT_DATA/repos/$slug/config.json"
 
