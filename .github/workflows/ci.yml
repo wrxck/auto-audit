@@ -6,11 +6,18 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Least-privilege default: only read the repo. Jobs that need more
+# (e.g. writing to gh-pages) must escalate explicitly at the job level.
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -19,34 +26,40 @@ jobs:
 
       - name: Compile all Python files
         run: |
-          pyfiles=$(find . -name '*.py' -not -path './node_modules/*' -not -path './.git/*' -not -path './.venv/*' 2>/dev/null || true)
-          if [ -n "$pyfiles" ]; then
-            echo "$pyfiles" | xargs -r python -m py_compile
-            echo "OK: Python compiles"
-          else
-            echo "(no Python files)"
-          fi
+          # -print0 + xargs -0 so weird filenames can't break the pipeline.
+          find . -name '*.py' \
+            -not -path './node_modules/*' -not -path './.git/*' -not -path './.venv/*' \
+            -print0 2>/dev/null \
+          | xargs -0 -r python -m py_compile \
+          && echo "OK: Python compiles (or no files)"
 
       - name: Validate all JSON files
         run: |
-          jsonfiles=$(find . -name '*.json' -not -path './node_modules/*' -not -path './.git/*' -not -path './coverage/*' 2>/dev/null || true)
-          if [ -n "$jsonfiles" ]; then
-            for f in $jsonfiles; do
-              python -c "import json; json.load(open('$f'))" || { echo "BAD: $f"; exit 1; }
-            done
-            echo "OK: JSON valid"
-          else
-            echo "(no JSON files)"
-          fi
+          # Filenames are passed to the validator as argv (sys.argv[1]),
+          # NEVER interpolated into source code. A PR adding
+          # `x'); os.system('...'); #.json` can't escape argv.
+          find . -name '*.json' \
+            -not -path './node_modules/*' -not -path './.git/*' -not -path './coverage/*' \
+            -print0 2>/dev/null \
+          | xargs -0 -r -I{} python -c 'import json,sys; json.load(open(sys.argv[1]))' {} \
+          && echo "OK: JSON valid (or no files)"
 
       - name: Syntax-check shell scripts
         run: |
-          shfiles=$(find . -name '*.sh' -not -path './node_modules/*' -not -path './.git/*' 2>/dev/null || true)
-          if [ -n "$shfiles" ]; then
-            for f in $shfiles; do bash -n "$f" || { echo "BAD: $f"; exit 1; }; done
-            echo "OK: shell syntax"
+          # Same treatment: null-delimited pipeline, no word-splitting
+          # of filenames.
+          find . -name '*.sh' \
+            -not -path './node_modules/*' -not -path './.git/*' \
+            -print0 2>/dev/null \
+          | xargs -0 -r -I{} bash -n {} \
+          && echo "OK: shell syntax (or no files)"
+
+      - name: Run guard smoke test
+        run: |
+          if [ -x scripts/test-guards.sh ]; then
+            bash scripts/test-guards.sh
           else
-            echo "(no shell files)"
+            echo "(no guard test)"
           fi
 
       - name: Set up Node (if package.json present)
@@ -58,13 +71,21 @@ jobs:
       - name: Install node deps + run tests
         if: hashFiles('**/package.json') != ''
         run: |
-          for pkg in $(find . -name 'package.json' -not -path '*/node_modules/*' -not -path './.git/*'); do
-            dir=$(dirname "$pkg")
-            echo "=== $dir ==="
-            pushd "$dir" > /dev/null
-            if [ -f package-lock.json ]; then npm ci --no-audit --no-fund || npm install --no-audit --no-fund; else npm install --no-audit --no-fund; fi
-            if [ "$(node -p "require('./package.json').scripts && (require('./package.json').scripts.test || '')")" != "" ]; then
-              npm test --if-present
-            fi
-            popd > /dev/null
-          done
+          # -print0 so package.json paths with spaces are safe too.
+          find . -name 'package.json' \
+            -not -path '*/node_modules/*' -not -path './.git/*' \
+            -print0 \
+          | while IFS= read -r -d '' pkg; do
+              dir="$(dirname "$pkg")"
+              echo "=== $dir ==="
+              pushd "$dir" > /dev/null
+              if [ -f package-lock.json ]; then
+                npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+              else
+                npm install --no-audit --no-fund
+              fi
+              if [ "$(node -p "require('./package.json').scripts && (require('./package.json').scripts.test || '')")" != "" ]; then
+                npm test --if-present
+              fi
+              popd > /dev/null
+            done
