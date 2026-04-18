@@ -12,7 +12,7 @@ You are the orchestrator. Your job is to **set up** the audit then **kick off** 
 ## Arguments
 
 - `$1` (required): GitHub repo URL — e.g. `https://github.com/wrxck/my-app` or `git@github.com:wrxck/my-app.git` or `owner/name` shorthand.
-- `$2` (optional, default `security`): comma-separated modules to run. Today only `security` is implemented. Future: `accessibility`, `performance`.
+- `$2` (optional, default `security`): comma-separated modules to run. `security` is the only module the plugin ships today.
 - `$3` (optional, default `manual`): merge policy. `manual` = leave PR open for human review (default, recommended). `auto` = auto-merge on positive independent review — opt-in only, review the security section in the README before using this on any repo you do not fully trust.
 
 If `$1` is missing, tell the user the usage and stop.
@@ -30,15 +30,10 @@ fi
 MODULES="${2:-security}"
 MERGE_POLICY="${3:-manual}"
 
-# only security is implemented today; reject others loudly so the user does
-# not think a stub module is doing something.
 IFS=',' read -r -a _mods <<<"$MODULES"
 for m in "${_mods[@]}"; do
   case "$m" in
     security) ;;
-    accessibility|performance)
-      echo "module '$m' is a stub and not yet implemented — drop it or use 'security' only." >&2
-      exit 1 ;;
     *) echo "unknown module '$m'; valid: security" >&2; exit 1 ;;
   esac
 done

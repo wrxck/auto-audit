@@ -2,9 +2,7 @@
 
 [![CI](https://github.com/wrxck/auto-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/wrxck/auto-audit/actions/workflows/ci.yml)
 
-An autonomous auditor for Claude Code. Point it at a GitHub repo; it scans for security vulnerabilities, triages false positives, writes a proof of concept, fixes each confirmed bug in its own PR, independently reviews the fix, and merges when the review is clean. It keeps doing that until the queue is drained, then rescans, until you stop it or the session ends.
-
-Modular by design: `audit-security` is the only live module today. `audit-accessibility` and `audit-performance` exist as stub skills that error out until someone fills them in — see the extension section below.
+An autonomous security auditor for Claude Code. Point it at a GitHub repo; it scans for security vulnerabilities, triages false positives, writes a proof of concept, fixes each confirmed bug in its own PR, independently reviews the fix, and merges when the review is clean. It keeps doing that until the queue is drained, then rescans, until you stop it or the session ends.
 
 ## How it works
 
@@ -195,9 +193,11 @@ The account you authenticated as needs write access to whichever repo you point 
 
 ## Extending with a new audit module
 
-1. Create `skills/audit-<module>/SKILL.md`, copying the shape of `audit-security/SKILL.md`. The contract: the skill scans, builds a JSON array of findings, pipes that array into `scripts/add-findings.sh`. That's it.
-2. Make sure the findings use a distinct `module` value (`"accessibility"`, `"performance"`) so the ID prefix is distinct (A11Y-xxxx, PERF-xxxx).
-3. Add the module name to the `modules` argument when starting: `/auto-audit:start <repo> security,accessibility`.
+`audit-security` is the only module today and the only one the plugin ships. If you want to add another (e.g. accessibility, performance, license-compliance), the contract is:
+
+1. Create `skills/audit-<module>/SKILL.md`, copying the shape of `audit-security/SKILL.md`. The skill scans, builds a JSON array of findings, pipes it into `scripts/add-findings.sh`.
+2. Pick a distinct `module` value so the finding ID prefix is distinct from `SEC-xxxx` — e.g. `A11Y-xxxx` for accessibility, `PERF-xxxx` for performance. Add your prefix mapping to `scripts/lib/state.sh:finding_create`.
+3. Add the module name to the `modules` argument when starting: `/auto-audit:start <repo> security,<module>`.
 4. If the module needs distinct triage/fix/review agents, add them under `agents/` and reference them in the tick skill's dispatch. The security pipeline is a reasonable default for most code-level issues.
 
 ## State layout
@@ -279,9 +279,9 @@ For that reason:
 - **loop seems stuck** — `/auto-audit:status` to check. If a tick is mid-flight and errored, the finding will usually be left at an intermediate status; the next tick re-tries. If a finding cycles between `confirmed` and `pr_rejected` forever, it will hit `max_fix_iterations` and be marked `failed`.
 - **false positive flood** — lower severity threshold in `audit-security/SKILL.md` or add regex exclusions. The LLM scanner is deliberately tuned to prefer recall over precision; the triage subagent trims aggressively.
 
-## Roadmap (not yet built)
+## Roadmap
 
-- Accessibility and performance modules (stubs exist)
 - Web dashboard for status (today: CLI only)
 - Slack webhook for merged PRs
 - Configurable cost ceiling per session (spend limit)
+- Resumable scans (cursor) for repos that exceed the 60-file scan cap
