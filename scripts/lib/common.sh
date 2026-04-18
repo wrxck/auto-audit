@@ -3,7 +3,17 @@
 # source this from any script: source "$(dirname "$0")/lib/common.sh"
 set -euo pipefail
 
-: "${CLAUDE_PLUGIN_DATA:=$HOME/.claude/plugins/data/auto-audit}"
+# claude_plugin_data falls back to the legacy path if that directory already
+# exists (so existing installs keep finding their state), otherwise xdg.
+_auto_audit_default_data() {
+  local legacy="$HOME/.claude/plugins/data/auto-audit"
+  if [ -d "$legacy" ]; then
+    printf '%s' "$legacy"
+  else
+    printf '%s/claude/auto-audit' "${XDG_DATA_HOME:-$HOME/.local/share}"
+  fi
+}
+: "${CLAUDE_PLUGIN_DATA:=$(_auto_audit_default_data)}"
 : "${CLAUDE_PLUGIN_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 export AUTO_AUDIT_DATA="$CLAUDE_PLUGIN_DATA"
