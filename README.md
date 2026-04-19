@@ -1,6 +1,7 @@
 # auto-audit
 
 [![CI](https://github.com/wrxck/auto-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/wrxck/auto-audit/actions/workflows/ci.yml)
+[![audited by auto-audit](https://img.shields.io/badge/audited_by-auto--audit-6366f1?logo=github&logoColor=white)](https://auto-audit.hesketh.pro)
 
 An autonomous security auditor for Claude Code. Point it at a GitHub repo; it scans for security vulnerabilities, triages false positives, writes a proof of concept, fixes each confirmed bug in its own PR, independently reviews the fix, and merges when the review is clean. It keeps doing that until the queue is drained, then rescans, until you stop it or the session ends.
 
@@ -125,20 +126,33 @@ You need four command-line tools and one auth step. The plugin checks on every i
 
 | Tool | Why | Check |
 |---|---|---|
+| `bash` ≥ 4.0 | most shell scripts use modern bash features | `bash --version` |
 | `gh` | opens PRs, reviews, merges | `gh --version` |
 | `git` | clones the target repo, commits fixes | `git --version` |
 | `jq` | parses all state files | `jq --version` |
 | `flock` | serialises concurrent writes (part of `util-linux`) | `flock --version` |
+
+### Platform support
+
+| OS | Status |
+|---|---|
+| Linux (any major distro) | first-class; no setup beyond the package-install block below |
+| macOS | supported; needs Homebrew to pick up a modern bash (system ships 3.2) and put `flock` on PATH |
+| Windows | run inside **WSL2** — the plugin is bash-only and targets POSIX path semantics |
 
 ### Install on a fresh machine
 
 **macOS (Homebrew):**
 
 ```bash
-brew install gh git jq util-linux
-# util-linux's flock isn't on PATH by default on macOS — add it:
-echo 'export PATH="$(brew --prefix util-linux)/sbin:$PATH"' >> ~/.zshrc
+brew install bash gh git jq util-linux
+# util-linux's flock isn't on PATH by default on macOS — add it, plus the modern bash:
+cat >> ~/.zshrc <<'EOF'
+export PATH="$(brew --prefix)/bin:$(brew --prefix util-linux)/sbin:$PATH"
+EOF
 source ~/.zshrc
+# verify the right bash is first on PATH:
+bash --version    # must be 4.x or 5.x, not 3.2
 ```
 
 **Debian / Ubuntu:**
@@ -190,6 +204,48 @@ You need a token with at least `repo` scope. `gh auth login` gives you that by d
 ### Access to the target repo
 
 The account you authenticated as needs write access to whichever repo you point auto-audit at, so it can push branches, open PRs, and merge them. For your own repos this is automatic. For a repo you don't own, you'll need to be a collaborator.
+
+## Badges
+
+Two badges for your README. The first is static ("uses auto-audit"); the second is dynamic and reflects the repo's current audit status.
+
+### Static — "audited by auto-audit"
+
+Drop this in any repo you've audited:
+
+```markdown
+[![audited by auto-audit](https://img.shields.io/badge/audited_by-auto--audit-6366f1?logo=github&logoColor=white)](https://auto-audit.hesketh.pro)
+```
+
+Renders as: [![audited by auto-audit](https://img.shields.io/badge/audited_by-auto--audit-6366f1?logo=github&logoColor=white)](https://auto-audit.hesketh.pro)
+
+Auto-audit can insert this for you during a first-run audit — see `/auto-audit:badge` below.
+
+### Dynamic — live audit status
+
+If you let auto-audit publish a status JSON to the `autoaudit/status` branch of your repo (the plugin does this automatically once you enable it), you can use shields.io's endpoint adapter to read it:
+
+```markdown
+[![auto-audit status](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FOWNER%2FREPO%2Fautoaudit%2Fstatus%2F.auto-audit%2Fstatus.json)](https://auto-audit.hesketh.pro)
+```
+
+Replace `OWNER/REPO`. The badge shows one of:
+
+- `auto-audit: clean` (green) — no open findings
+- `auto-audit: N findings` (amber) — findings pending triage or fix
+- `auto-audit: critical` (red) — at least one confirmed critical
+
+Status file schema lives at `scripts/status.json.schema.json` in this repo.
+
+### Installing the badges automatically
+
+After a scan completes:
+
+```
+/auto-audit:badge
+```
+
+opens a PR in the target repo adding (a) the static badge to the README and (b) the `.auto-audit/status.json` skeleton on the `autoaudit/status` branch so the dynamic badge renders from day one. You can decline either half on the PR.
 
 ## Extending with a new audit module
 

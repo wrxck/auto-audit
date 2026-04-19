@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://auto-audit.hesketh.pro/schemas/status.json",
+  "title": "auto-audit status",
+  "description": "Status file published to .auto-audit/status.json on the autoaudit/status branch of an audited repo. Top-level fields match shields.io's endpoint-adapter schema so the file doubles as a badge source. The autoAudit object carries our own structured metadata.",
+  "type": "object",
+  "required": ["schemaVersion", "label", "message", "color", "autoAudit"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1, "description": "shields.io endpoint schema version" },
+    "label": { "type": "string", "description": "Left side of the badge. Always 'auto-audit' for us." },
+    "message": { "type": "string", "description": "Right side of the badge. One of: 'clean', '<N> findings', 'critical'." },
+    "color": { "type": "string", "enum": ["brightgreen", "yellow", "orange", "red", "lightgrey", "blue"] },
+    "namedLogo": { "type": "string" },
+    "logoColor": { "type": "string" },
+    "cacheSeconds": { "type": "integer", "minimum": 0 },
+    "autoAudit": {
+      "type": "object",
+      "required": ["schemaVersion", "pluginVersion", "scannedAt", "findingsOpen", "findingsResolved"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "type": "integer", "const": 1 },
+        "pluginVersion": { "type": "string" },
+        "scannedAt": { "type": "string", "format": "date-time" },
+        "findingsOpen": {
+          "type": "object",
+          "required": ["total", "critical", "high", "medium", "low"],
+          "additionalProperties": false,
+          "properties": {
+            "total": { "type": "integer", "minimum": 0 },
+            "critical": { "type": "integer", "minimum": 0 },
+            "high": { "type": "integer", "minimum": 0 },
+            "medium": { "type": "integer", "minimum": 0 },
+            "low": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "findingsResolved": {
+          "type": "object",
+          "required": ["merged", "falsePositive"],
+          "additionalProperties": false,
+          "properties": {
+            "merged": { "type": "integer", "minimum": 0 },
+            "falsePositive": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "pluginHomepage": { "type": "string", "format": "uri" }
+      }
+    }
+  }
+}
