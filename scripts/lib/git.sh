@@ -155,3 +155,87 @@ repo_describe() {
   local ws; ws="$(workspace_dir)"
   (cd "$ws" && gh repo view --json nameWithOwner,defaultBranchRef,visibility,languages,stargazerCount)
 }
+
+publish_status_branch() {
+  # usage: publish_status_branch <status_json_content>
+  #
+  # Publishes .auto-audit/status.json to the autoaudit/status branch of the
+  # target repo. The branch is managed entirely by the plugin: each
+  # invocation does an orphan commit containing just the status file,
+  # then force-with-lease pushes. Not a PR — it's a dedicated state branch
+  # a shields.io endpoint reads from.
+  #
+  # Size is tiny (a few hundred bytes) and content is generated from
+  # local state, so commit_all's size/secret guards don't apply; we use
+  # a scoped set here.
+  local status_json="$1"
+  [ -n "$status_json" ] || die "publish_status_branch: empty status json"
+  guard_valid_json "$status_json" "status_json"
+
+  local ws; ws="$(workspace_dir)"
+  local branch="autoaudit/status"
+  guard_autoaudit_branch "$branch" "status branch"
+  guard_gh_authenticated
+
+  # Do the work in a disposable worktree so we don't disturb the caller's
+  # current HEAD. Root it in AUTO_AUDIT_DATA (not /tmp) so a flaky tmpfs
+  # can't eat it mid-run.
+  local wt
+  wt="$(mktemp -d "$AUTO_AUDIT_DATA/.status-worktree.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "git -C '$ws' worktree remove --force '$wt' 2>/dev/null; rm -rf '$wt'" RETURN
+
+  # Orphan checkout: new ref, no history, just the status file.
+  git -C "$ws" worktree add --detach "$wt" 1>&2
+  (
+    cd "$wt"
+    git checkout --orphan "$branch" 1>&2
+    git rm -rf . >/dev/null 2>&1 || true
+    mkdir -p .auto-audit
+    printf '%s' "$status_json" > .auto-audit/status.json
+    git add .auto-audit/status.json
+    git -c user.name="${GIT_AUTHOR_NAME:-$(git config user.name)}" \
+        -c user.email="${GIT_AUTHOR_EMAIL:-$(git config user.email)}" \
+        commit -m "chore(auto-audit): publish status $(date -u +%FT%TZ)" 1>&2
+    # Force-with-lease: safe because the plugin owns this branch end-to-end.
+    git push origin "HEAD:$branch" --force-with-lease 1>&2
+  )
+}
+
+ensure_readme_badge() {
+  # usage: ensure_readme_badge
+  # If the target repo's README doesn't already include the auto-audit badge,
+  # add it. Returns 0 if the badge was added (caller should commit), 1 if it
+  # was already there, 2 if no README exists.
+  local ws; ws="$(workspace_dir)"
+  local readme=""
+  local candidate
+  for candidate in README.md README.rst README.txt README; do
+    if [ -f "$ws/$candidate" ]; then readme="$ws/$candidate"; break; fi
+  done
+  [ -n "$readme" ] || return 2
+  if grep -q "audited_by-auto--audit" "$readme"; then
+    return 1
+  fi
+  # Insert after the first level-1 heading, or prepend if none.
+  local badge='[![audited by auto-audit](https://img.shields.io/badge/audited_by-auto--audit-6366f1?logo=github&logoColor=white)](https://auto-audit.hesketh.pro)'
+  local tmp; tmp="$(mktemp)"
+  awk -v b="$badge" '
+    BEGIN { inserted = 0 }
+    /^# / && !inserted { print; print ""; print b; inserted = 1; next }
+    { print }
+    END {
+      if (!inserted) {
+        # no # heading found; we will fix by prepending from the outer shell
+        print "__NO_HEADING_SENTINEL__"
+      }
+    }
+  ' "$readme" > "$tmp"
+  if grep -q '^__NO_HEADING_SENTINEL__$' "$tmp"; then
+    # prepend mode
+    printf '%s\n\n' "$badge" > "$tmp"
+    cat "$readme" >> "$tmp"
+  fi
+  mv "$tmp" "$readme"
+  return 0
+}
