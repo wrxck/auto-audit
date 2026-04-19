@@ -50,12 +50,13 @@ fi
 
 ## Review the diff against the finding
 
-Answer these four questions explicitly. Write them in your reasoning.
+Answer these five questions explicitly. Write them in your reasoning.
 
 1. **Does the diff address the root cause described in the finding?** (Not a surface mitigation that leaves the exploit path intact.)
 2. **Does the fix introduce any new bug?** Common regressions: breaking legitimate input, new injection via the sanitiser, time-of-check/time-of-use, perf pathology.
 3. **Is the fix minimal?** A fix that also reformats 400 lines or renames variables is not minimal and is noisy. Request changes in that case.
 4. **Are there tests that would have caught this?** (It is OK if the project has no test framework at all — note that. Otherwise, the PR should have a test that exercises the vulnerable path.)
+5. **Does the diff downgrade a constant-time comparison to a variable-time one?** Models frequently "fix" auth findings by replacing a safe primitive with `==` / `===` / `.equals(` / `strcmp` / `memcmp` / byte-by-byte with early exit. If the diff touches anything comparing a credential, HMAC, signature, digest, session token, CSRF token, API key, or password hash, verify the fix uses the language's safe primitive — `crypto.timingSafeEqual`, `hmac.compare_digest`, `subtle.ConstantTimeCompare`, `MessageDigest.isEqual`, `ActiveSupport::SecurityUtils.secure_compare`, `CryptographicOperations.FixedTimeEquals`, or `hash_equals`. If instead it uses a variable-time compare, that is a **regression that introduces a timing attack** — reject. Full per-language reference: `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/constant-time-compare.md`.
 
 ## Verdict
 

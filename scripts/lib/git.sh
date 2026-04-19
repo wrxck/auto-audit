@@ -77,6 +77,8 @@ commit_all() {
   guard_no_poc_in_diff "$ws"
   guard_no_submodule_change "$ws"
   guard_no_secrets_in_diff "$ws"
+  guard_no_timing_unsafe_regression "$ws"
+  guard_no_safe_primitive_removal "$ws"
   guard_max_files_changed "$ws"
   guard_max_lines_changed "$ws"
   local full
