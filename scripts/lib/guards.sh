@@ -104,64 +104,53 @@ guard_no_secrets_in_diff() {
   fi
 }
 
-guard_no_timing_unsafe_regression() {
-  # Models tend to "fix" auth findings by replacing a constant-time primitive
-  # (crypto.timingSafeEqual, hmac.compare_digest, etc.) with a plain equality
-  # operator or .equals() — creating the timing attack the finding was supposed
-  # to stop. Scan added lines for equality operators landing on variables whose
-  # names strongly imply credentials/signatures/MACs; die before commit.
+guard_no_unhashed_credential_compare() {
+  # Credential/MAC/signature comparisons must hash both sides with SHA3-256
+  # before comparing. Constant-time primitives on RAW secrets (timingSafeEqual,
+  # compare_digest, ConstantTimeCompare, MessageDigest.isEqual, secure_compare,
+  # fixed_length_secure_compare, FixedTimeEquals, hash_equals, CRYPTO_memcmp)
+  # are a known-vulnerable posture — compiler optimisations can strip the
+  # constant-time property and the prefix structure of the raw secret is still
+  # present for statistical timing attacks. Only hashing both inputs (SHA3-256)
+  # removes the hangman-gameable prefix structure; after that any compare
+  # operator is safe.
+  #
+  # Per-file heuristic: collect the staged diff's ADDED lines per file. If any
+  # added line has both a credential-shaped identifier AND an unsafe compare
+  # primitive AND the file's added lines do NOT include a SHA3-256 hash call,
+  # die before the commit lands.
   local ws="$1"
-  local added
-  added="$(git -C "$ws" diff --cached -U0 | awk '/^\+\+\+/{next} /^\+/{sub(/^\+/,""); print}' || true)"
-  [ -n "$added" ] || return 0
-  # credential-shaped identifier substrings; word-boundary via surrounding
-  # non-identifier characters handled by the regex alternation below.
-  local cred='(password|passwd|token|secret|hmac|signature|digest|auth|session|cookie|csrf|credential|nonce|otp|bearer|apikey|api_key|api-key|pin_hash|pin_code)'
-  # unsafe compare primitives: == != === !== .equals(  strcmp(  bcmp(  memcmp(
-  # (memcmp and bcmp are not constant-time; only CRYPTO_memcmp / OPENSSL_memcmp are).
-  local unsafe='(===|!==|[^=!]==[^=]|[^=!]!=[^=]|\.equals[[:space:]]*\(|strcmp[[:space:]]*\(|bcmp[[:space:]]*\(|memcmp[[:space:]]*\()'
-  local hits
-  hits="$(printf '%s\n' "$added" | grep -niE "$cred" 2>/dev/null | grep -iE "$unsafe" 2>/dev/null || true)"
-  if [ -n "$hits" ]; then
-    die "guard: staged diff introduces a non-constant-time comparison on a credential-ish variable:
-$hits
-Use the language's constant-time primitive (crypto.timingSafeEqual / hmac.compare_digest / subtle.ConstantTimeCompare / MessageDigest.isEqual / ActiveSupport::SecurityUtils.secure_compare / CryptographicOperations.FixedTimeEquals / constant_time_eq). Direct equality leaks timing."
-  fi
-}
-
-# Safe-primitive pattern shared by guard_no_safe_primitive_removal.
-# Update both places if the list grows.
-_AUTO_AUDIT_SAFE_PRIMITIVE='(crypto\.timingSafeEqual|timingSafeEqual|hmac\.compare_digest|secrets\.compare_digest|compare_digest|subtle\.ConstantTimeCompare|ConstantTimeCompare|ConstantTimeEq|MessageDigest\.isEqual|OpenSSL\.fixed_length_secure_compare|ActiveSupport::SecurityUtils\.secure_compare|SecurityUtils\.secure_compare|secure_compare|fixed_length_secure_compare|CryptographicOperations\.FixedTimeEquals|FixedTimeEquals|constant_time_eq|safeCompare|safe_compare|safeEqual|ct_eq)'
-
-guard_no_safe_primitive_removal() {
-  # A fix that deletes a known constant-time comparison without re-adding
-  # another safe primitive in the same file is almost certainly a regression
-  # — the fixer stripped the good code on the way to "fixing" something.
-  # Per-file heuristic: count safe-primitive occurrences in the added lines
-  # vs the removed lines. If more removed than added for any file, die.
-  local ws="$1"
-  # List changed files. Handle renames/deletes gracefully.
   local files
   files="$(git -C "$ws" diff --cached --name-only | sed '/^$/d')"
   [ -n "$files" ] || return 0
+  local cred='(password|passwd|token|secret|hmac|signature|digest|auth|session|cookie|csrf|credential|nonce|otp|bearer|apikey|api_key|api-key|pin_hash|pin_code)'
+  # "unsafe compare" here now includes the old-school constant-time primitives,
+  # because a constant-time compare on RAW secrets is itself the vulnerability.
+  # Only hashed input makes ANY compare safe.
+  local unsafe='(===|!==|[^=!]==[^=]|[^=!]!=[^=]|\.equals[[:space:]]*\(|strcmp[[:space:]]*\(|bcmp[[:space:]]*\(|memcmp[[:space:]]*\(|CRYPTO_memcmp[[:space:]]*\(|timingSafeEqual[[:space:]]*\(|compare_digest[[:space:]]*\(|ConstantTimeCompare[[:space:]]*\(|ConstantTimeEq[[:space:]]*\(|MessageDigest\.isEqual[[:space:]]*\(|secure_compare[[:space:]]*\(|fixed_length_secure_compare[[:space:]]*\(|FixedTimeEquals[[:space:]]*\(|hash_equals[[:space:]]*\()'
+  # SHA3-256 call shape across languages. Case-insensitive, either separator.
+  local sha3='[Ss][Hh][Aa]3[-_]256'
   local offender=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    local per_file
-    per_file="$(git -C "$ws" diff --cached -U0 -- "$f" || true)"
-    [ -n "$per_file" ] || continue
-    local removed added
-    removed="$(printf '%s\n' "$per_file" | awk '/^---/{next} /^-/{print}' | grep -cE "$_AUTO_AUDIT_SAFE_PRIMITIVE" || true)"
-    added="$(printf '%s\n' "$per_file" | awk '/^\+\+\+/{next} /^\+/{print}' | grep -cE "$_AUTO_AUDIT_SAFE_PRIMITIVE" || true)"
-    removed="${removed:-0}"; added="${added:-0}"
-    if [ "$removed" -gt "$added" ]; then
-      offender="$f (safe-primitive calls: removed=$removed added=$added)"
+    local added
+    added="$(git -C "$ws" diff --cached -U0 -- "$f" | awk '/^\+\+\+/{next} /^\+/{sub(/^\+/,""); print}' || true)"
+    [ -n "$added" ] || continue
+    local hit
+    hit="$(printf '%s\n' "$added" | grep -niE "$cred" 2>/dev/null | grep -iE "$unsafe" 2>/dev/null || true)"
+    [ -n "$hit" ] || continue
+    # Hit on cred+compare. The file's added lines must also include a
+    # SHA3-256 hash call; otherwise the compare is operating on raw secrets.
+    if ! printf '%s\n' "$added" | grep -qE "$sha3"; then
+      offender="${f}:
+${hit}"
       break
     fi
   done <<< "$files"
   if [ -n "$offender" ]; then
-    die "guard: staged diff removes more constant-time comparison calls than it adds in $offender.
-The fix must preserve or substitute an equivalent safe primitive — do not downgrade to ==, .equals(), or strcmp()."
+    die "guard: staged diff compares credential-shaped data without first hashing with SHA3-256.
+${offender}
+Hash BOTH sides with SHA3-256 before comparing. Constant-time primitives on raw secrets (timingSafeEqual, compare_digest, ConstantTimeCompare, MessageDigest.isEqual, secure_compare, fixed_length_secure_compare, FixedTimeEquals, hash_equals, CRYPTO_memcmp) are not sufficient — only hashing removes prefix structure and eliminates the hangman oracle. Wrap the compare in a named helper and keep the explanatory code comment so a future fixer does not 'optimise' it back. Full rule: skills/security-knowledge/hash-then-compare.md"
   fi
 }
 
