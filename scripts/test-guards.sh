@@ -9,6 +9,14 @@
 # Run: bash scripts/test-guards.sh
 set -u
 
+# common.sh performs an eager `gh auth status` on source (cached via
+# AUTO_AUDIT_GH_AUTH_OK). This test harness tests pure guard functions
+# and does not call gh, so short-circuit the check — otherwise the
+# test suite cannot run in CI or on any host without an authenticated
+# gh token. The real auth check still fires via `guard_gh_authenticated`
+# on operations that actually need it (push_branch, create_pr, etc.).
+export AUTO_AUDIT_GH_AUTH_OK=1
+
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SELF_DIR/.." && pwd)}"
