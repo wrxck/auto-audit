@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "label": "auto-audit",
+  "message": "clean",
+  "color": "brightgreen",
+  "namedLogo": "github",
+  "logoColor": "white",
+  "cacheSeconds": 3600,
+  "autoAudit": {
+    "schemaVersion": 1,
+    "pluginVersion": "0.3.0",
+    "scannedAt": "2026-04-19T01:11:30Z",
+    "findingsOpen": {
+      "total": 0,
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    },
+    "findingsResolved": {
+      "merged": 0,
+      "falsePositive": 0
+    },
+    "pluginHomepage": "https://auto-audit.hesketh.pro"
+  }
+}
