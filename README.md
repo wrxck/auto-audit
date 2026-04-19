@@ -5,6 +5,17 @@
 
 An autonomous security auditor for Claude Code. Point it at a GitHub repo; it scans for security vulnerabilities, triages false positives, writes a proof of concept, fixes each confirmed bug in its own PR, independently reviews the fix, and merges when the review is clean. It keeps doing that until the queue is drained, then rescans, until you stop it or the session ends.
 
+## Quick install
+
+auto-audit is available from the [`wrxck-claude-plugins`](https://github.com/wrxck/claude-plugins) marketplace. From Claude Code:
+
+```
+/plugin marketplace add wrxck/claude-plugins
+/plugin install auto-audit@wrxck-claude-plugins
+```
+
+Full requirements and alternative install paths are [in the Install section below](#install).
+
 ## How it works
 
 ```
@@ -112,11 +123,18 @@ Today the library contains one rule — `constant-time-compare.md` — with two 
 
 ## Install
 
-The plugin is distributed through a Claude Code plugin marketplace. If you maintain your own marketplace, add an entry pointing at `https://github.com/<owner>/auto-audit.git`, then from Claude Code:
+auto-audit is published through the [`wrxck-claude-plugins`](https://github.com/wrxck/claude-plugins) marketplace. From Claude Code:
 
 ```
-/plugin marketplace update <your-marketplace>
-/plugin install auto-audit@<your-marketplace>
+/plugin marketplace add wrxck/claude-plugins
+/plugin install auto-audit@wrxck-claude-plugins
+```
+
+If you already have the marketplace registered, pull the latest manifest first:
+
+```
+/plugin marketplace update wrxck-claude-plugins
+/plugin install auto-audit@wrxck-claude-plugins
 ```
 
 Confirm it loaded:
@@ -126,6 +144,15 @@ Confirm it loaded:
 ```
 
 You should see `auto-audit` and its skills (`start`, `tick`, `status`, `resume`, `stop`).
+
+### Alternative: self-hosted marketplace
+
+If you maintain your own Claude Code marketplace, add an entry pointing at `https://github.com/wrxck/auto-audit.git` (or your own fork), then:
+
+```
+/plugin marketplace update <your-marketplace>
+/plugin install auto-audit@<your-marketplace>
+```
 
 ## Requirements
 
