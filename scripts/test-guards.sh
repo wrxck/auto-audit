@@ -9,6 +9,14 @@
 # Run: bash scripts/test-guards.sh
 set -u
 
+# common.sh performs an eager `gh auth status` on source (cached via
+# AUTO_AUDIT_GH_AUTH_OK). This test harness tests pure guard functions
+# and does not call gh, so short-circuit the check — otherwise the
+# test suite cannot run in CI or on any host without an authenticated
+# gh token. The real auth check still fires via `guard_gh_authenticated`
+# on operations that actually need it (push_branch, create_pr, etc.).
+export AUTO_AUDIT_GH_AUTH_OK=1
+
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 CLAUDE_PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$SELF_DIR/.." && pwd)}"
@@ -174,6 +182,167 @@ git -C "$REPO" add "$REPO/secret.py"
 expect_fail "AKIA-looking secret added dies"       guard_no_secrets_in_diff "$REPO"
 git -C "$REPO" reset -q HEAD
 rm -f "$REPO/secret.py"
+
+# ---------------------------------------------------------------------------
+# guard_no_timing_unsafe_regression: dies if the fix introduces a plain
+# equality operator on a credential-ish variable. Models tend to "fix" auth
+# findings by replacing a constant-time primitive with ===/.equals, which
+# creates the timing-attack vulnerability the finding was supposed to stop.
+printf '\n[guard_no_timing_unsafe_regression]\n'
+
+# unrelated change passes
+printf 'export function add(a, b) { return a + b; }\n' > "$REPO/math.js"
+git -C "$REPO" add "$REPO/math.js"
+expect_pass "unrelated diff passes"                guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/math.js"
+
+# safe primitive on a credential-named var passes
+printf 'import crypto from "crypto";\nexport const check = (token, expected) => crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected));\n' > "$REPO/auth.js"
+git -C "$REPO" add "$REPO/auth.js"
+expect_pass "safe primitive on token passes"       guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/auth.js"
+
+# variable that happens to match keyword but isn't a credential keyword passes
+printf 'const count = total === 0 ? 0 : total;\n' > "$REPO/count.js"
+git -C "$REPO" add "$REPO/count.js"
+expect_pass "non-credential var passes"            guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/count.js"
+
+# === on a password var dies
+printf 'if (password === userInput) { return true; }\n' > "$REPO/login.js"
+git -C "$REPO" add "$REPO/login.js"
+expect_fail "=== on password dies"                 guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/login.js"
+
+# == on a token var dies
+printf 'if token == provided_token:\n    return True\n' > "$REPO/check.py"
+git -C "$REPO" add "$REPO/check.py"
+expect_fail "== on token dies"                     guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/check.py"
+
+# Java .equals on hmac dies
+printf 'if (hmac.equals(provided)) { return true; }\n' > "$REPO/Verify.java"
+git -C "$REPO" add "$REPO/Verify.java"
+expect_fail ".equals on hmac var dies"             guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/Verify.java"
+
+# strcmp on a secret dies
+printf 'if (strcmp(secret, input) == 0) { return 1; }\n' > "$REPO/verify.c"
+git -C "$REPO" add "$REPO/verify.c"
+expect_fail "strcmp on secret dies"                guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/verify.c"
+
+# property access on a credential still caught
+printf 'if (user.password === candidate) { grant(); }\n' > "$REPO/prop.js"
+git -C "$REPO" add "$REPO/prop.js"
+expect_fail "property password === dies"           guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/prop.js"
+
+# signature compare dies
+printf 'return signature === expectedSig;\n' > "$REPO/sig.js"
+git -C "$REPO" add "$REPO/sig.js"
+expect_fail "signature === dies"                   guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/sig.js"
+
+# bearer token compare dies
+printf 'if (bearer == provided) { return; }\n' > "$REPO/bearer.js"
+git -C "$REPO" add "$REPO/bearer.js"
+expect_fail "bearer == dies"                       guard_no_timing_unsafe_regression "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/bearer.js"
+
+# removal of an unsafe compare does NOT trigger (only added lines are scanned)
+# we simulate this by first committing an unsafe compare, then removing it
+printf 'if (password === input) return 1;\n' > "$REPO/old.js"
+git -C "$REPO" add "$REPO/old.js"
+git -C "$REPO" commit -q -m 'old unsafe compare'
+git -C "$REPO" rm -q "$REPO/old.js"
+expect_pass "removing unsafe line passes (only + scanned)"  guard_no_timing_unsafe_regression "$REPO"
+# drop both the staged deletion and the seed commit so later tests start clean
+git -C "$REPO" reset -q --hard HEAD~1
+
+# ---------------------------------------------------------------------------
+# guard_no_safe_primitive_removal: a fix that deletes a known safe comparison
+# primitive (crypto.timingSafeEqual, hmac.compare_digest, etc.) without
+# replacing it with another safe primitive in the same file dies.
+printf '\n[guard_no_safe_primitive_removal]\n'
+
+# seed a file with a safe primitive call on the target repo
+printf 'import crypto from "crypto";\nexport const check = (a, b) => crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n' > "$REPO/hsafe.js"
+git -C "$REPO" add "$REPO/hsafe.js"
+git -C "$REPO" commit -q -m 'seed: safe primitive'
+
+# diff that preserves the primitive (unrelated edit) passes
+printf 'import crypto from "crypto";\nexport const check = (a, b) => crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));\n// keepalive\n' > "$REPO/hsafe.js"
+git -C "$REPO" add "$REPO/hsafe.js"
+expect_pass "unrelated edit preserves primitive"   guard_no_safe_primitive_removal "$REPO"
+git -C "$REPO" reset -q HEAD
+git -C "$REPO" checkout -q -- "$REPO/hsafe.js"
+
+# diff that removes timingSafeEqual entirely dies
+printf 'export const check = (a, b) => a === b;\n' > "$REPO/hsafe.js"
+git -C "$REPO" add "$REPO/hsafe.js"
+expect_fail "removing timingSafeEqual dies"        guard_no_safe_primitive_removal "$REPO"
+git -C "$REPO" reset -q HEAD
+git -C "$REPO" checkout -q -- "$REPO/hsafe.js"
+
+# diff that refactors around the safe primitive but keeps one call passes.
+# Models sometimes restructure the import / wrapper without removing the
+# primitive call itself — that's fine.
+printf 'import { timingSafeEqual } from "crypto";\nexport const check = (a, b) => timingSafeEqual(Buffer.from(a), Buffer.from(b));\n' > "$REPO/hsafe.js"
+git -C "$REPO" add "$REPO/hsafe.js"
+expect_pass "refactor keeps timingSafeEqual call passes"  guard_no_safe_primitive_removal "$REPO"
+git -C "$REPO" reset -q HEAD
+git -C "$REPO" checkout -q -- "$REPO/hsafe.js"
+
+# python: seed hmac.compare_digest then remove it -> dies
+printf 'import hmac\ndef verify(a, b):\n    return hmac.compare_digest(a, b)\n' > "$REPO/v.py"
+git -C "$REPO" add "$REPO/v.py"
+git -C "$REPO" commit -q -m 'seed: py safe primitive'
+printf 'def verify(a, b):\n    return a == b\n' > "$REPO/v.py"
+git -C "$REPO" add "$REPO/v.py"
+expect_fail "removing hmac.compare_digest dies"    guard_no_safe_primitive_removal "$REPO"
+git -C "$REPO" reset -q HEAD
+git -C "$REPO" checkout -q -- "$REPO/v.py"
+
+# go: seed subtle.ConstantTimeCompare then remove -> dies
+printf 'package x\nimport "crypto/subtle"\nfunc Check(a, b []byte) bool {\n  return subtle.ConstantTimeCompare(a, b) == 1\n}\n' > "$REPO/c.go"
+git -C "$REPO" add "$REPO/c.go"
+git -C "$REPO" commit -q -m 'seed: go safe primitive'
+printf 'package x\nfunc Check(a, b []byte) bool {\n  return string(a) == string(b)\n}\n' > "$REPO/c.go"
+git -C "$REPO" add "$REPO/c.go"
+expect_fail "removing ConstantTimeCompare dies"    guard_no_safe_primitive_removal "$REPO"
+git -C "$REPO" reset -q HEAD
+git -C "$REPO" checkout -q -- "$REPO/c.go"
+
+# java: seed MessageDigest.isEqual then remove -> dies
+printf 'import java.security.MessageDigest;\nclass V { static boolean v(byte[] a, byte[] b) { return MessageDigest.isEqual(a, b); } }\n' > "$REPO/V.java"
+git -C "$REPO" add "$REPO/V.java"
+git -C "$REPO" commit -q -m 'seed: java safe primitive'
+printf 'class V { static boolean v(byte[] a, byte[] b) { return java.util.Arrays.equals(a, b); } }\n' > "$REPO/V.java"
+git -C "$REPO" add "$REPO/V.java"
+expect_fail "removing MessageDigest.isEqual dies"  guard_no_safe_primitive_removal "$REPO"
+git -C "$REPO" reset -q HEAD
+git -C "$REPO" checkout -q -- "$REPO/V.java"
+
+# ruby: seed ActiveSupport::SecurityUtils.secure_compare then remove -> dies
+printf "require 'active_support/security_utils'\ndef v(a, b)\n  ActiveSupport::SecurityUtils.secure_compare(a, b)\nend\n" > "$REPO/v.rb"
+git -C "$REPO" add "$REPO/v.rb"
+git -C "$REPO" commit -q -m 'seed: ruby safe primitive'
+printf "def v(a, b)\n  a == b\nend\n" > "$REPO/v.rb"
+git -C "$REPO" add "$REPO/v.rb"
+expect_fail "removing secure_compare dies"         guard_no_safe_primitive_removal "$REPO"
+git -C "$REPO" reset -q HEAD
+git -C "$REPO" checkout -q -- "$REPO/v.rb"
 
 # ---------------------------------------------------------------------------
 printf '\n---\n'

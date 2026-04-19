@@ -77,4 +77,16 @@ echo "final_status=$(finding_get "$FID" | jq -r .status)"
 - **Be strict.** If you cannot describe a concrete exploit, it is a false positive. "In principle" bugs without reachable sources aren't worth the queue.
 - **Consider defence in depth.** A raw SQL string with user input isn't automatically SQLi if a layer above has already allowlisted the input to e.g. one of {"asc","desc"}.
 - **Severity downgrade allowed.** If the finding's severity is `critical` but the real impact is only `low`, set `.triage.severity_override` to the corrected severity. The reviewer later will weigh this.
+- **The following calls are safe constant-time comparisons. If the code at the finding location already uses one, and the finding claims a timing attack, the finding is almost certainly a false positive — do not confirm.** Full rationale and per-language reference: `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/constant-time-compare.md`.
+  - Node: `crypto.timingSafeEqual(a, b)`, `timingSafeEqual(a, b)`
+  - Python: `hmac.compare_digest(a, b)`, `secrets.compare_digest(a, b)`
+  - Go: `subtle.ConstantTimeCompare(a, b)`, `subtle.ConstantTimeEq(a, b)`
+  - Java: `MessageDigest.isEqual(a, b)`
+  - Ruby: `ActiveSupport::SecurityUtils.secure_compare(a, b)`, `OpenSSL.fixed_length_secure_compare(a, b)`
+  - Rust: `constant_time_eq::constant_time_eq(a, b)`, `subtle::ConstantTimeEq`
+  - C: `CRYPTO_memcmp`, `consttime_memequal`, `timingsafe_bcmp`
+  - .NET: `CryptographicOperations.FixedTimeEquals(a, b)`
+  - PHP: `hash_equals($known, $user)`
+  - Elixir: `Plug.Crypto.secure_compare/2`
+  Note the scanner LLM does not always know these are safe and will flag them. Your job is to not confirm the regression.
 - If the finding's `file` doesn't exist or `line` is clearly wrong (miss by >30 lines), search the workspace for the symbol rather than giving up. If genuinely unlocatable, verdict is `false_positive` with reasoning "could not locate the claimed code".

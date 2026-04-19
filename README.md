@@ -5,6 +5,17 @@
 
 An autonomous security auditor for Claude Code. Point it at a GitHub repo; it scans for security vulnerabilities, triages false positives, writes a proof of concept, fixes each confirmed bug in its own PR, independently reviews the fix, and merges when the review is clean. It keeps doing that until the queue is drained, then rescans, until you stop it or the session ends.
 
+## Quick install
+
+auto-audit is available from the [`wrxck-claude-plugins`](https://github.com/wrxck/claude-plugins) marketplace. From Claude Code:
+
+```
+/plugin marketplace add wrxck/claude-plugins
+/plugin install auto-audit@wrxck-claude-plugins
+```
+
+Full requirements and alternative install paths are [in the Install section below](#install).
+
 ## How it works
 
 ```
@@ -82,7 +93,7 @@ One file per finding at `${CLAUDE_PLUGIN_DATA}/repos/<slug>/findings/<id>.json`,
 
 Every safety claim the plugin makes is enforced at two layers. The **LLM layer** is an instruction in the relevant agent's role card: the model is told not to do the unsafe thing. The **programmatic layer** is a check in `scripts/lib/guards.sh` (plus `scripts/lib/sandbox.sh` for test execution) that runs before the action commits: it refuses, even if the model tries.
 
-We do not claim 100% safety. An LLM is not a hardened security boundary, and judgement-call properties ("is this fix minimal?", "is this triage reasoning sound?") cannot be mechanically verified. What the programmatic layer *does* guarantee is that anything expressible as "refuse if input is not in the allowed set" stays refused. `bash scripts/test-guards.sh` exercises every programmatic guard; it currently passes 42/42 assertions.
+We do not claim 100% safety. An LLM is not a hardened security boundary, and judgement-call properties ("is this fix minimal?", "is this triage reasoning sound?") cannot be mechanically verified. What the programmatic layer *does* guarantee is that anything expressible as "refuse if input is not in the allowed set" stays refused. `bash scripts/test-guards.sh` exercises every programmatic guard; it currently passes 60/60 assertions.
 
 | Safety claim | LLM-layer enforcement | Programmatic enforcement |
 |---|---|---|
@@ -95,6 +106,7 @@ We do not claim 100% safety. An LLM is not a hardened security boundary, and jud
 | Scraped repos' test commands are sandboxed | fixer role card: "You MUST route every invocation through `run_sandboxed`" | `sandbox.sh` runs commands in podman/docker/bwrap with no network, read-only mount, unprivileged user, cpu/memory/pid limits; under `sandbox_mode=strict` (default) it refuses to run unsandboxed |
 | Secrets are not committed | fixer role card: "never bypass pre-commit hooks" | `guard_no_secrets_in_diff` pattern-scans added lines (AKIA/ghp_/sk-ant-/PEM headers/etc.) and dies if any match |
 | Submodules cannot be added mid-audit | — | `guard_no_submodule_change` dies if `.gitmodules` or a submodule pointer is staged |
+| Constant-time comparisons are not downgraded by a fix | triager role card lists safe primitives so it will not confirm a false-positive finding on them; fixer role card lists the per-language safe primitive and forbids `==` / `===` / `.equals(` / `strcmp` / byte-by-byte on credential-shaped variables; reviewer role card question #5 rejects a PR that introduces a variable-time compare on credential data | `guard_no_timing_unsafe_regression` dies if staged diff introduces `==`/`===`/`!=`/`!==`/`.equals(`/`strcmp`/`memcmp`/`bcmp` near an identifier matching `(password\|passwd\|token\|secret\|hmac\|signature\|digest\|auth\|session\|cookie\|csrf\|credential\|nonce\|otp\|bearer\|apikey\|api_key\|pin_hash\|pin_code)`; `guard_no_safe_primitive_removal` dies if a per-file count of constant-time primitive calls (`crypto.timingSafeEqual`, `hmac.compare_digest`, `subtle.ConstantTimeCompare`, `MessageDigest.isEqual`, `ActiveSupport::SecurityUtils.secure_compare`, `CryptographicOperations.FixedTimeEquals`, `hash_equals`, `constant_time_eq`, `safeCompare`) drops in the staged diff |
 | State transitions follow the lifecycle | tick SKILL: explicit dispatch table per entry status | `guard_status_transition` rejects any edge not in the allowed set; every `finding_update_status` call runs it first |
 | Finding `title` / `description` / `code_snippet` are untrusted | every agent role card wraps them in `=== BEGIN UNTRUSTED REPOSITORY CONTENT ===` delimiters | — (judgement call — no mechanical check can distinguish a malicious comment from legitimate prose) |
 | Fixer gives up after N attempts | fixer role card notes the cap | `scripts/finding-attempts.sh` increments before each attempt; tick reads the counter and marks `failed` at the cap |
@@ -103,13 +115,26 @@ We do not claim 100% safety. An LLM is not a hardened security boundary, and jud
 
 Cells marked `—` on the programmatic side are genuine judgement calls. Those live entirely at the LLM layer, which is why **`merge_policy=manual` is the default** — the plugin does not merge anything without a human look when the last line of defence is an LLM.
 
+### Security-knowledge rule library
+
+An LLM asked to "fix" a security finding defaults to the **popular** idiom, not the **secure** one. Sometimes those are the same; for credential comparison, cryptographic PRNGs, deserialisation, SQL construction, and a handful of other primitives, they are not — the popular form is the vulnerability. The plugin maintains a library of rules for these cases under `skills/security-knowledge/`. Each file names the safe primitive per language, the anti-patterns to reject, and the guidance the triager / fixer / reviewer role cards pull from. Where the rule is mechanically checkable, a sibling programmatic guard in `scripts/lib/guards.sh` enforces it — if the LLM ignores the rule, the commit is refused.
+
+Today the library contains one rule — `constant-time-compare.md` — with two paired guards (`guard_no_timing_unsafe_regression`, `guard_no_safe_primitive_removal`). The structure is designed to be extended: add a new `<topic>.md`, add the matching guards and test cases, reference the file from the role cards, and the agents pick it up on next dispatch.
+
 ## Install
 
-The plugin is distributed through a Claude Code plugin marketplace. If you maintain your own marketplace, add an entry pointing at `https://github.com/<owner>/auto-audit.git`, then from Claude Code:
+auto-audit is published through the [`wrxck-claude-plugins`](https://github.com/wrxck/claude-plugins) marketplace. From Claude Code:
 
 ```
-/plugin marketplace update <your-marketplace>
-/plugin install auto-audit@<your-marketplace>
+/plugin marketplace add wrxck/claude-plugins
+/plugin install auto-audit@wrxck-claude-plugins
+```
+
+If you already have the marketplace registered, pull the latest manifest first:
+
+```
+/plugin marketplace update wrxck-claude-plugins
+/plugin install auto-audit@wrxck-claude-plugins
 ```
 
 Confirm it loaded:
@@ -119,6 +144,15 @@ Confirm it loaded:
 ```
 
 You should see `auto-audit` and its skills (`start`, `tick`, `status`, `resume`, `stop`).
+
+### Alternative: self-hosted marketplace
+
+If you maintain your own Claude Code marketplace, add an entry pointing at `https://github.com/wrxck/auto-audit.git` (or your own fork), then:
+
+```
+/plugin marketplace update <your-marketplace>
+/plugin install auto-audit@<your-marketplace>
+```
 
 ## Requirements
 

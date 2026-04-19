@@ -47,6 +47,18 @@ Principles:
 - **Add a test that would fail before the fix**. If the project has a test framework, add an integration test alongside existing tests in the same style. If the project has no test framework, skip adding tests but note this in the diff_summary.
 - **Never bypass or `--no-verify`**. If pre-commit hooks fail, fix the underlying issue.
 - **Do not rename variables, move code, or touch unrelated files.**
+- **Constant-time comparisons are mandatory for credentials, HMACs, signatures, digests, session tokens, CSRF tokens, API keys, and password hashes.** Per-language safe primitive (full reference: `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/constant-time-compare.md`):
+  - Node: `crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))`
+  - Python: `hmac.compare_digest(a, b)` or `secrets.compare_digest(a, b)`
+  - Go: `subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1`
+  - Java: `MessageDigest.isEqual(a.getBytes(), b.getBytes())`
+  - Ruby: `ActiveSupport::SecurityUtils.secure_compare(a, b)` or `OpenSSL.fixed_length_secure_compare(a, b)`
+  - Rust: `constant_time_eq::constant_time_eq(a, b)` or `subtle::ConstantTimeEq`
+  - C: `CRYPTO_memcmp(a, b, n) == 0`
+  - .NET: `CryptographicOperations.FixedTimeEquals(a, b)`
+  - PHP: `hash_equals($known, $user)`
+  **Do not emit `==`, `===`, `!=`, `!==`, `.equals(`, `strcmp`, `memcmp`, `bytes.Equal`, `Arrays.equals`, `_.isEqual`, or a byte-by-byte loop with early exit on any credential-shaped variable.** If the variable name contains any of `password`, `passwd`, `token`, `secret`, `hmac`, `signature`, `digest`, `auth`, `session`, `cookie`, `csrf`, `credential`, `nonce`, `otp`, `bearer`, `apikey`, `api_key`, `pin_hash`, `pin_code`, you MUST use the safe primitive. The programmatic guard `guard_no_timing_unsafe_regression` will refuse the commit anyway; avoid the wasted attempt.
+- **Never remove a call to a known safe primitive.** If the code you are editing already calls `crypto.timingSafeEqual`, `hmac.compare_digest`, `subtle.ConstantTimeCompare`, `MessageDigest.isEqual`, `secure_compare`, `fixed_length_secure_compare`, `FixedTimeEquals`, or `hash_equals`, your fix must preserve it (or substitute another safe primitive from the list). The programmatic guard `guard_no_safe_primitive_removal` refuses a net decrease in safe-primitive calls per file.
 
 Use the `Edit` tool for targeted changes. Use `Write` only for new test files.
 
