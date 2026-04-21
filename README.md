@@ -239,6 +239,48 @@ You need a token with at least `repo` scope. `gh auth login` gives you that by d
 
 The account you authenticated as needs write access to whichever repo you point auto-audit at, so it can push branches, open PRs, and merge them. For your own repos this is automatic. For a repo you don't own, you'll need to be a collaborator.
 
+### Reducing permission prompts on long runs
+
+The autonomous loop issues a continuous stream of Bash calls — `gh pr review/merge/create`, `git` on the audit workspace, the plugin's own state-management scripts. By default Claude Code prompts for each one. From mobile or Remote Control that's unworkable.
+
+Two ways to handle this without `--dangerously-skip-permissions`:
+
+**Recommended — scoped allowlist in user settings.** Add to `~/.claude/settings.json` under `permissions.allow`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash /root/.claude/plugins/cache/wrxck-claude-plugins/auto-audit/*)",
+      "Bash(git -C /root/.claude/plugins/data/auto-audit/*)",
+      "Bash(gh pr review --approve --body *)",
+      "Bash(gh pr review --approve --body-file *)",
+      "Bash(gh pr review --request-changes --body *)",
+      "Bash(gh pr review --request-changes --body-file *)",
+      "Bash(gh pr merge * --squash)",
+      "Bash(gh pr merge * --squash --delete-branch)",
+      "Bash(gh pr merge * --merge --delete-branch)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr close *)",
+      "Bash(gh release create *)",
+      "Bash(gh repo clone *)",
+      "Bash(mktemp)",
+      "Bash(mktemp *)"
+    ]
+  }
+}
+```
+
+Substitute `/root/.claude/plugins/...` with your user's actual `~/.claude/plugins/...` path if you're not running as root. The patterns are deliberately path-scoped to:
+
+- the plugin's cache directory (so only the plugin's own scripts auto-approve)
+- the plugin's data directory (so `git -C` only covers auto-audit's clones, never your other repos)
+- the `gh pr` subcommands auto-audit issues during normal operation
+
+Your existing `PreToolUse` hooks still run **on top** of the allowlist — if you have a git-workflow hook that blocks `--force`, `--no-verify`, or direct pushes to `main`/`develop`, the allowlist does not disable it. Dangerous variants of allowlisted commands still require approval or stay blocked.
+
+**Alternative — `merge_policy=manual`**. If you don't want any autonomous action taken, set `manual` at start time. The plugin then opens PRs and stops. You get notified, you review, you merge manually. No continuous approval stream needed because nothing is happening between stages.
+
 ## Badges
 
 Two badges for your README. The first is static ("uses auto-audit"); the second is dynamic and reflects the repo's current audit status.
