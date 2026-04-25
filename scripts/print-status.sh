@@ -30,3 +30,32 @@ if [ -n "$next" ]; then
 else
   echo "(queue empty)"
 fi
+
+# Surface findings stuck in an intermediate (mid-tick) status. The tick is
+# idempotent — the next /auto-audit:tick will fold these back to the
+# matching entry status — but stale entries here are how a loop death is
+# observable, so flag them prominently. Threshold defaults to 10 minutes;
+# override with AUTO_AUDIT_STALE_SECONDS.
+echo
+echo "--- stale findings (>= ${AUTO_AUDIT_STALE_SECONDS:-600}s in an intermediate stage) ---"
+stale_threshold="${AUTO_AUDIT_STALE_SECONDS:-600}"
+now_epoch="$(date -u +%s)"
+findings_dir="$AUTO_AUDIT_DATA/repos/$slug/findings"
+stale_seen=0
+if [ -d "$findings_dir" ]; then
+  for f in "$findings_dir"/*.json; do
+    [ -f "$f" ] || continue
+    status="$(jq -r '.status' "$f")"
+    case "$status" in triaging|poc_writing|fixing|reviewing) ;; *) continue ;; esac
+    last_at="$(jq -r '.updated_at // .created_at // empty' "$f")"
+    [ -n "$last_at" ] || continue
+    last_epoch="$(iso_to_epoch "$last_at")"
+    [ "$last_epoch" -gt 0 ] || continue
+    age=$(( now_epoch - last_epoch ))
+    if [ "$age" -ge "$stale_threshold" ]; then
+      jq -r --arg a "${age}s" '"\(.id) [\(.severity)/\(.status)] stuck for \($a) — \(.title)"' "$f"
+      stale_seen=$((stale_seen+1))
+    fi
+  done
+fi
+[ "$stale_seen" -eq 0 ] && echo "(none — loop is either healthy or idle)"

@@ -239,6 +239,16 @@ You need a token with at least `repo` scope. `gh auth login` gives you that by d
 
 The account you authenticated as needs write access to whichever repo you point auto-audit at, so it can push branches, open PRs, and merge them. For your own repos this is automatic. For a repo you don't own, you'll need to be a collaborator.
 
+### Refreshing the installed version after a marketplace bump
+
+When a new auto-audit release lands on the marketplace, Claude Code's plugin cache picks it up but the `installed_plugins.json` pointer keeps pointing at whatever version was active when the session started. Restart Claude Code, or run:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/refresh-installed.sh
+```
+
+The script reads the highest semver directory in the plugin cache and atomically updates the installed-plugins entry to point there. No-op if you're already on the latest. Edits only the `auto-audit@wrxck-claude-plugins` entry; other plugins are untouched.
+
 ### Reducing permission prompts on long runs
 
 The autonomous loop issues a continuous stream of Bash calls — `gh pr review/merge/create`, `git` on the audit workspace, the plugin's own state-management scripts. By default Claude Code prompts for each one. From mobile or Remote Control that's unworkable.
@@ -257,6 +267,7 @@ Two ways to handle this without `--dangerously-skip-permissions`:
       "Bash(gh pr review --approve --body-file *)",
       "Bash(gh pr review --request-changes --body *)",
       "Bash(gh pr review --request-changes --body-file *)",
+      "Bash(gh pr comment * --body *)",
       "Bash(gh pr merge * --squash)",
       "Bash(gh pr merge * --squash --delete-branch)",
       "Bash(gh pr merge * --merge --delete-branch)",
