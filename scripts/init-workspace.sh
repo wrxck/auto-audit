@@ -25,12 +25,16 @@ case "$slug" in
   *..*|*/*|"") die "refusing suspicious slug '$slug' — is this a github url?" ;;
 esac
 
-# block a concurrent start: if there is already an active audit on a different
-# repo, stop and tell the user to finish or /auto-audit:stop first.
+# multiple audits can coexist on disk — each repo has its own findings
+# directory, its own per-tick flock, its own config. The "active" pointer
+# is only the default the unsuffixed commands operate on. Starting on a
+# different repo simply repoints the active pointer; the previous repo's
+# state is preserved at $AUTO_AUDIT_DATA/repos/<previous-slug>/ and can
+# be addressed by passing --slug to status / tick / stop / resume.
 if [ -f "$AUTO_AUDIT_DATA/active.json" ]; then
   existing="$(jq -r '.slug' "$AUTO_AUDIT_DATA/active.json" 2>/dev/null || echo '')"
   if [ -n "$existing" ] && [ "$existing" != "$slug" ]; then
-    die "active audit already running on '$existing'. run /auto-audit:stop first, or /auto-audit:resume $existing to continue it."
+    log "switching active repo: '$existing' -> '$slug' (previous repo state preserved)"
   fi
 fi
 
