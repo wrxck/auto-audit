@@ -44,11 +44,11 @@ Each tick advances exactly **one** finding by **one** stage. That makes the loop
 
 | Command | Purpose |
 |---|---|
-| `/auto-audit:start <repo> [modules=security] [policy=manual\|auto]` | Clone, scan, start the loop (policy defaults to `manual`) |
+| `/auto-audit:start <repo> [modules=security] [policy=manual\|auto]` | Clone, scan, start the loop (policy defaults to `manual`). If another audit is already active, repoints the active pointer to the new repo; the previous repo's state stays on disk. |
 | `/auto-audit:tick` | Advance one finding by one stage. Normally the `/loop` calls this for you. |
-| `/auto-audit:status` | Show breakdown of findings and recent activity |
-| `/auto-audit:resume [slug]` | Resume after `/auto-audit:stop` or session restart |
-| `/auto-audit:stop` | Drop the active-repo pointer; press Esc to cancel the `/loop` |
+| `/auto-audit:status [--all \| <slug>]` | Status of the active repo by default. Pass a slug for a specific repo, or `--all` for a one-line summary across every repo. |
+| `/auto-audit:resume [slug]` | Resume after `/auto-audit:stop` or session restart. Eagerly recovers any findings stuck mid-tick. |
+| `/auto-audit:stop [slug]` | Drop the active-repo pointer; press Esc to cancel the `/loop`. Pass a slug to scope which repo to stop. |
 
 ## Arguments
 
@@ -390,7 +390,7 @@ ${CLAUDE_PLUGIN_DATA}/
 - The fixer runs the target repo's test suite (e.g. `npm test`, `pytest`) **inside a sandbox** — see the Security section for details and how to configure it.
 - The fixer gives up after `max_fix_iterations` attempts on a single finding.
 - Scans are bounded: 60 files per scan, files over 1500 lines are skipped, files over 300 kB are skipped.
-- Concurrent starts are refused: running `/auto-audit:start` with a different repo while one is already active will error out until you `/auto-audit:stop`.
+- Multiple audits coexist on disk; each repo has its own findings dir, per-tick flock, and config. The "active" pointer is just the default for unsuffixed commands. `/auto-audit:start <other-repo>` repoints the active pointer to the new repo without touching the previous repo's state — switch back later with `/auto-audit:resume <previous-slug>`. Use `/auto-audit:status --all` to list every repo this plugin has initialised.
 
 ## Security
 

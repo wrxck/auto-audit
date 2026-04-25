@@ -1,10 +1,50 @@
 #!/usr/bin/env bash
-# human-readable status dump for the active repo
+# human-readable status dump.
+# usage: print-status.sh                    # active repo only
+#        print-status.sh <slug>             # specific repo
+#        print-status.sh --all              # one-line summary for every audited repo
 set -euo pipefail
 # shellcheck disable=SC1091
 source "${BASH_SOURCE%/*}/lib/state.sh"
 
-slug="$(active_slug)" || exit 1
+if [ "${1:-}" = "--all" ]; then
+  active="$(active_slug 2>/dev/null || echo '')"
+  echo "=== auto-audit repos (active: ${active:-none}) ==="
+  if [ ! -d "$AUTO_AUDIT_DATA/repos" ] || [ -z "$(ls -A "$AUTO_AUDIT_DATA/repos" 2>/dev/null)" ]; then
+    echo "(no repos initialised)"
+    exit 0
+  fi
+  printf '%-30s %-10s %s\n' "slug" "merged" "url"
+  # set +e for the loop body so a single broken repo dir doesn't kill the listing.
+  set +e
+  for d in "$AUTO_AUDIT_DATA"/repos/*/; do
+    s="$(basename "$d")"
+    [ -f "$d/config.json" ] || continue
+    url="$(jq -r '.url // "?"' "$d/config.json" 2>/dev/null || echo '?')"
+    merged=0
+    total=0
+    if [ -d "$d/findings" ]; then
+      for fj in "$d"/findings/*.json; do
+        [ -f "$fj" ] || continue
+        total=$((total+1))
+        st="$(jq -r .status "$fj" 2>/dev/null || echo unknown)"
+        [ "$st" = "merged" ] && merged=$((merged+1))
+      done
+    fi
+    marker=" "
+    [ "$s" = "$active" ] && marker="*"
+    printf '%s %-29s %4d/%-5d %s\n' "$marker" "$s" "$merged" "$total" "$url"
+  done
+  set -e
+  exit 0
+fi
+
+if [ -n "${1:-}" ]; then
+  slug="$1"
+  [ -d "$AUTO_AUDIT_DATA/repos/$slug" ] || { echo "no such repo: $slug" >&2; exit 1; }
+else
+  slug="$(active_slug)" || exit 1
+fi
 cfg="$(config_file "$slug")"
 echo "=== auto-audit status ==="
 echo "repo: $(jq -r '.url' "$cfg")"
