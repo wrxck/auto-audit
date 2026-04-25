@@ -78,6 +78,9 @@ commit_all() {
   guard_no_submodule_change "$ws"
   guard_no_secrets_in_diff "$ws"
   guard_no_unhashed_credential_compare "$ws"
+  guard_no_insecure_random "$ws"
+  guard_no_unsafe_deserialize "$ws"
+  guard_no_unsafe_xml_parser "$ws"
   guard_max_files_changed "$ws"
   guard_max_lines_changed "$ws"
   local full
