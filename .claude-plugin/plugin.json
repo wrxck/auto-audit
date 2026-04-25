@@ -1,6 +1,6 @@
 {
   "name": "auto-audit",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Autonomous security auditor. Scans a GitHub repo for vulnerabilities, triages false positives, writes a PoC, fixes each confirmed bug in its own PR, independently reviews the fix, and merges when the review is clean.",
   "author": {
     "name": "Matt Hesketh",
