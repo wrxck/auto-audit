@@ -58,6 +58,10 @@ Each tick advances exactly **one** finding by **one** stage. That makes the loop
   - `manual` (default) — stop at `pr_approved` and mark the finding `skipped`. A human must merge.
   - `auto` — merge each PR automatically after an independent reviewer approves. Opt-in only; see the Security section before enabling.
 
+### `audit_library_surface` config flag
+
+Set to `true` in `${AUTO_AUDIT_DATA}/repos/<slug>/config.json` to make the triager treat publicly-exported but currently-uncalled API surface as `confirmed` rather than `false_positive`. Default is `false` (only flag exploitable runtime paths). Use `true` for libraries / SDKs / shared modules where future callers cannot be assumed safe; use `false` for application code where reachability is fully knowable. Severity of library-surface findings is automatically dropped one tier (e.g. `critical` → `medium`) since exploitability requires a future caller. The flag exists because triagers running independently kept disagreeing on the same dead-code question, flipping verdict run-to-run; codifying it makes the posture explicit and reproducible.
+
 ## Design choices worth knowing
 
 ### Independent review is the load-bearing safety net
