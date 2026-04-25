@@ -310,6 +310,167 @@ expect_pass "removing unsafe line passes (only + scanned)"  guard_no_unhashed_cr
 git -C "$REPO" reset -q --hard HEAD~1
 
 # ---------------------------------------------------------------------------
+# guard_no_insecure_random: dies if the diff uses a non-cryptographic RNG
+# on a security-sensitive identifier name.
+printf '\n[guard_no_insecure_random]\n'
+
+# unrelated diff passes
+printf 'export const total = items.reduce((a,b)=>a+b,0);\n' > "$REPO/sum.js"
+git -C "$REPO" add "$REPO/sum.js"
+expect_pass "unrelated diff passes"                guard_no_insecure_random "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/sum.js"
+
+# CSPRNG passes
+printf 'import { randomBytes } from "crypto";\nexport const token = randomBytes(32).toString("hex");\n' > "$REPO/safe.js"
+git -C "$REPO" add "$REPO/safe.js"
+expect_pass "crypto.randomBytes for token passes"  guard_no_insecure_random "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/safe.js"
+
+# Math.random for token dies
+printf 'const token = Math.random().toString(36).slice(2);\n' > "$REPO/bad.js"
+git -C "$REPO" add "$REPO/bad.js"
+expect_fail "Math.random for token dies"           guard_no_insecure_random "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/bad.js"
+
+# random.random for csrf dies (Python)
+printf 'import random\ncsrf = random.random()\n' > "$REPO/csrf.py"
+git -C "$REPO" add "$REPO/csrf.py"
+expect_fail "random.random for csrf dies"          guard_no_insecure_random "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/csrf.py"
+
+# rand for session_id dies (PHP-shape)
+printf '<?php $session_id = mt_rand(0, PHP_INT_MAX);\n' > "$REPO/sess.php"
+git -C "$REPO" add "$REPO/sess.php"
+expect_fail "mt_rand for session_id dies"          guard_no_insecure_random "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/sess.php"
+
+# Math.random for non-credential var passes
+printf 'const colour = "#" + Math.random().toString(16).slice(2,8);\n' > "$REPO/colour.js"
+git -C "$REPO" add "$REPO/colour.js"
+expect_pass "Math.random for colour passes"        guard_no_insecure_random "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/colour.js"
+
+# ---------------------------------------------------------------------------
+# guard_no_unsafe_deserialize: dies on known-unsafe deserialiser calls.
+printf '\n[guard_no_unsafe_deserialize]\n'
+
+# unrelated passes
+printf 'data = json.loads(request.body)\n' > "$REPO/safe.py"
+git -C "$REPO" add "$REPO/safe.py"
+expect_pass "json.loads passes"                    guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/safe.py"
+
+# yaml.safe_load passes
+printf 'cfg = yaml.safe_load(open("config.yml"))\n' > "$REPO/cfg.py"
+git -C "$REPO" add "$REPO/cfg.py"
+expect_pass "yaml.safe_load passes"                guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/cfg.py"
+
+# yaml.load with SafeLoader passes
+printf 'cfg = yaml.load(stream, Loader=yaml.SafeLoader)\n' > "$REPO/cfg2.py"
+git -C "$REPO" add "$REPO/cfg2.py"
+expect_pass "yaml.load+SafeLoader passes"          guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/cfg2.py"
+
+# pickle.loads dies
+printf 'import pickle\ndata = pickle.loads(request.body)\n' > "$REPO/p.py"
+git -C "$REPO" add "$REPO/p.py"
+expect_fail "pickle.loads dies"                    guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/p.py"
+
+# yaml.load default loader dies
+printf 'cfg = yaml.load(request.form["x"])\n' > "$REPO/y.py"
+git -C "$REPO" add "$REPO/y.py"
+expect_fail "yaml.load default dies"               guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/y.py"
+
+# unserialize PHP dies
+printf '<?php $obj = unserialize($_POST["data"]);\n' > "$REPO/u.php"
+git -C "$REPO" add "$REPO/u.php"
+expect_fail "PHP unserialize dies"                 guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/u.php"
+
+# Java ObjectInputStream dies
+printf 'ObjectInputStream ois = new ObjectInputStream(req.getInputStream());\n' > "$REPO/d.java"
+git -C "$REPO" add "$REPO/d.java"
+expect_fail "ObjectInputStream dies"               guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/d.java"
+
+# Jackson enableDefaultTyping dies
+printf 'ObjectMapper m = new ObjectMapper();\nm.enableDefaultTyping();\n' > "$REPO/j.java"
+git -C "$REPO" add "$REPO/j.java"
+expect_fail "Jackson enableDefaultTyping dies"     guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/j.java"
+
+# Marshal.load Ruby dies
+printf "obj = Marshal.load(request.body)\n" > "$REPO/m.rb"
+git -C "$REPO" add "$REPO/m.rb"
+expect_fail "Ruby Marshal.load dies"               guard_no_unsafe_deserialize "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/m.rb"
+
+# ---------------------------------------------------------------------------
+# guard_no_unsafe_xml_parser: dies if a known-unsafe XML parser is invoked
+# without a safety marker on a nearby line.
+printf '\n[guard_no_unsafe_xml_parser]\n'
+
+# unrelated passes
+printf 'export const x = 1;\n' > "$REPO/x.js"
+git -C "$REPO" add "$REPO/x.js"
+expect_pass "unrelated diff passes"                guard_no_unsafe_xml_parser "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/x.js"
+
+# defusedxml passes
+printf 'from defusedxml.ElementTree import fromstring\ndoc = fromstring(request.body)\n' > "$REPO/safe.py"
+git -C "$REPO" add "$REPO/safe.py"
+expect_pass "defusedxml passes"                    guard_no_unsafe_xml_parser "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/safe.py"
+
+# JAXP with disallow-doctype-decl passes
+printf 'DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();\nf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);\n' > "$REPO/Safe.java"
+git -C "$REPO" add "$REPO/Safe.java"
+expect_pass "JAXP with disallow-doctype-decl passes"  guard_no_unsafe_xml_parser "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/Safe.java"
+
+# stdlib ElementTree dies
+printf 'import xml.etree.ElementTree as ET\ndoc = ET.fromstring(request.body)\n' > "$REPO/bad.py"
+git -C "$REPO" add "$REPO/bad.py"
+expect_fail "stdlib ElementTree fromstring dies"   guard_no_unsafe_xml_parser "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/bad.py"
+
+# JAXP without flags dies
+printf 'DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();\nDocument d = f.newDocumentBuilder().parse(new InputSource(new StringReader(input)));\n' > "$REPO/Bad.java"
+git -C "$REPO" add "$REPO/Bad.java"
+expect_fail "JAXP without flags dies"              guard_no_unsafe_xml_parser "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/Bad.java"
+
+# .NET XmlDocument with safe config passes
+printf 'var doc = new XmlDocument();\ndoc.XmlResolver = null;\nvar settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit };\n' > "$REPO/Safe.cs"
+git -C "$REPO" add "$REPO/Safe.cs"
+expect_pass ".NET XmlDocument with safe config passes"  guard_no_unsafe_xml_parser "$REPO"
+git -C "$REPO" reset -q HEAD
+rm -f "$REPO/Safe.cs"
+
+# ---------------------------------------------------------------------------
 printf '\n---\n'
 if [ "$FAIL" -eq 0 ]; then
   printf 'test-guards: %d passed, 0 failed\n' "$PASS"

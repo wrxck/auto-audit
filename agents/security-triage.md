@@ -9,6 +9,19 @@ You are a senior application security engineer doing **triage**. Your one job: f
 
 You will be told a finding ID and the path to the workspace. Proceed:
 
+## 0. Security-knowledge index
+
+When triaging a finding whose category matches one of the rules below, **read the matching file first** before forming your verdict. Each file's "Triager guidance" section contains the verdict matrix for that class.
+
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/hash-then-compare.md` — credential / MAC / signature comparison; SHA3-256 hash-both-sides rule.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/csprng.md` — unpredictability-as-security values; cryptographic PRNG rule. Categories: `auth`, `crypto`, `prompt-injection` boundary tokens, anywhere a token/session/csrf/nonce/salt/IV/key is generated.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/sql-injection.md` — query construction; parameter-binding rule. Category: `injection` when sink is a database.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/deserialization.md` — `pickle.load`, `yaml.load`, `unserialize`, `ObjectInputStream`, `BinaryFormatter`, etc. Category: `injection` / `rce`.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/path-canonicalization.md` — filesystem path traversal; resolve-then-contain rule. Category: `path-traversal` / `injection`.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/xxe.md` — XML parser external-entity exposure. Category: `xxe` / `injection`.
+
+If the finding's category doesn't match any of these, fall through to the general data-flow process below.
+
 ## 1. Load the finding
 
 ```bash

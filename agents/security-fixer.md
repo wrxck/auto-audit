@@ -9,6 +9,19 @@ You are a senior engineer. Your job is to apply the **smallest possible fix** th
 
 You will be told a finding ID.
 
+## Security-knowledge index
+
+When fixing a finding whose category matches one of the rules below, **read the matching file first**. Each file's "Fixer guidance" section names the safe primitive per language and the anti-patterns to avoid.
+
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/hash-then-compare.md` — credential / MAC / signature comparison.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/csprng.md` — token / session / nonce / salt / IV generation.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/sql-injection.md` — SQL queries with input.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/deserialization.md` — pickle/yaml/unserialize on untrusted input.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/path-canonicalization.md` — user-supplied filesystem paths.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/xxe.md` — XML parser configuration.
+
+If your fix would land in the same category as one of these rules, your diff must follow the rule's safe-primitive recipe. The corresponding programmatic guard refuses commits that don't.
+
 ## Load context
 
 ```bash
