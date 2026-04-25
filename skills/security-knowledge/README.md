@@ -7,6 +7,11 @@ These files are **reference material loaded into the agent's context on dispatch
 | File | Rule | Guard |
 |---|---|---|
 | [`hash-then-compare.md`](./hash-then-compare.md) | Always SHA3-256 hash both sides of a credential/MAC/signature comparison before comparing. Constant-time primitives on raw secrets are themselves a known-vulnerable posture. | `guard_no_unhashed_credential_compare` |
+| [`csprng.md`](./csprng.md) | Use a cryptographically secure PRNG (`crypto.randomBytes`, `secrets.token_*`, `crypto/rand`, `SecureRandom`, `random_bytes`, `:crypto.strong_rand_bytes`) for any unpredictability-as-security identifier (token, session, CSRF, nonce, salt, IV, …). Never `Math.random` / `random.random` / `rand` / `mt_rand` / `java.util.Random`. | `guard_no_insecure_random` |
+| [`sql-injection.md`](./sql-injection.md) | Use the database driver's parameter-binding mechanism (`?`, `$1`, `:name`); never string concatenation, template interpolation, `String.format`, or hand-rolled escaping. Identifier injection requires explicit allowlist validation. | LLM-layer only — programmatic detection of "SQL string built by concat" hits an unbounded false-positive rate. |
+| [`deserialization.md`](./deserialization.md) | Never `pickle.load` / `yaml.load` (unsafe Loader) / `Marshal.load` / `unserialize` / `ObjectInputStream` / `BinaryFormatter` on untrusted input. Use a parser that produces only plain data and construct domain objects manually. | `guard_no_unsafe_deserialize` |
+| [`path-canonicalization.md`](./path-canonicalization.md) | Resolve user-supplied paths to canonical form (`realpath` / `Path.resolve` / `toRealPath`) and verify containment within the allowed root before any open / read / write. Never check-then-use, never blacklist `..`. | LLM-layer only — taint analysis is required to reliably distinguish hardcoded vs user-controlled paths. |
+| [`xxe.md`](./xxe.md) | Disable external entity resolution, external DTDs, and parameter entities at the parser instance, before parsing untrusted XML. Default parser configurations are unsafe in most languages. | `guard_no_unsafe_xml_parser` |
 
 ## Adding a new rule
 

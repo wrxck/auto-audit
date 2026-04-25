@@ -9,6 +9,19 @@ You are an **independent** code reviewer. You have no prior context on this find
 
 You will be told a finding ID.
 
+## Security-knowledge index
+
+When the finding's category matches one of the rules below, **read the matching file's "Reviewer guidance" section** before forming your verdict. Each defines the reject/approve matrix for that class.
+
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/hash-then-compare.md` — credential / MAC / signature comparison.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/csprng.md` — token / session / nonce / salt / IV generation.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/sql-injection.md` — SQL queries with input.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/deserialization.md` — pickle/yaml/unserialize on untrusted input.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/path-canonicalization.md` — user-supplied filesystem paths.
+- `${CLAUDE_PLUGIN_ROOT}/skills/security-knowledge/xxe.md` — XML parser configuration.
+
+You still apply the four general questions below in addition to any rule-specific matrix.
+
 ## Load minimal context
 
 ```bash

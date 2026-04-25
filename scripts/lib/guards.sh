@@ -154,6 +154,95 @@ Hash BOTH sides with SHA3-256 before comparing. Constant-time primitives on raw 
   fi
 }
 
+guard_no_insecure_random() {
+  # Non-cryptographic PRNGs (Math.random, random.random, rand, mt_rand, etc.)
+  # used for security-sensitive identifiers (token, secret, key, csrf, nonce,
+  # salt, iv, session, cookie, code, reset, …) are predictable and let an
+  # attacker reconstruct or guess the value. Per-file added-lines scan: if a
+  # line includes one of the unsafe RNG calls AND a credential-shaped
+  # identifier name, die.
+  local ws="$1"
+  local files
+  files="$(git -C "$ws" diff --cached --name-only | sed '/^$/d')"
+  [ -n "$files" ] || return 0
+  local sec='(token|secret|hmac|signature|digest|auth|session|cookie|csrf|credential|nonce|otp|bearer|apikey|api_key|api-key|password|passwd|pin_hash|pin_code|salt|iv|reset|state|verifier)'
+  # Unsafe RNG primitives. Word-boundary handled by surrounding non-identifier
+  # characters in the regex alternation. `Random()` is constructor-form Java/Kotlin/.NET.
+  local bad='(Math\.random[[:space:]]*\(|\brandom\.random[[:space:]]*\(|\brandom\.randint[[:space:]]*\(|\brandom\.choice[s]?[[:space:]]*\(|\brandom\.uniform[[:space:]]*\(|\bmt_rand[[:space:]]*\(|\blrand48[[:space:]]*\(|\bsrand[[:space:]]*\(|\brand[[:space:]]*\([^)]|new[[:space:]]+Random[[:space:]]*\(|new[[:space:]]+java\.util\.Random[[:space:]]*\(|new[[:space:]]+System\.Random[[:space:]]*\(|System\.nanoTime[[:space:]]*\(|kotlin\.random\.Random|"math/rand"|math/rand\.|uniqid[[:space:]]*\(|:rand[[:space:]]*\.[[:space:]]*uniform)'
+  local offender=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    local added
+    added="$(git -C "$ws" diff --cached -U0 -- "$f" | awk '/^\+\+\+/{next} /^\+/{sub(/^\+/,""); print}' || true)"
+    [ -n "$added" ] || continue
+    local hit
+    hit="$(printf '%s\n' "$added" | grep -niE "$sec" 2>/dev/null | grep -iE "$bad" 2>/dev/null || true)"
+    [ -n "$hit" ] || continue
+    offender="${f}:
+${hit}"
+    break
+  done <<< "$files"
+  if [ -n "$offender" ]; then
+    die "guard: staged diff uses a non-cryptographic PRNG on a security-sensitive identifier.
+${offender}
+Use a cryptographically secure PRNG: crypto.randomBytes / secrets.token_bytes / crypto/rand / SecureRandom / SecureRandom.hex / RandomNumberGenerator.GetBytes / random_bytes / :crypto.strong_rand_bytes. Full rule: skills/security-knowledge/csprng.md"
+  fi
+}
+
+guard_no_unsafe_deserialize() {
+  # Deserialisers that turn input into language objects with attacker-
+  # influenced class instantiation are RCE-class on untrusted input. Flag any
+  # call to a known-unsafe deserialiser; line-local with no exception.
+  local ws="$1"
+  local added
+  added="$(git -C "$ws" diff --cached -U0 | awk '/^\+\+\+/{next} /^\+/{sub(/^\+/,""); print}' || true)"
+  [ -n "$added" ] || return 0
+  local bad='(\bpickle\.loads?[[:space:]]*\(|\bcPickle\.loads?[[:space:]]*\(|\bmarshal\.loads?[[:space:]]*\(|\byaml\.unsafe_load[[:space:]]*\(|Marshal\.load[[:space:]]*\(|\bunserialize[[:space:]]*\(|new[[:space:]]+ObjectInputStream[[:space:]]*\(|new[[:space:]]+BinaryFormatter[[:space:]]*\(|node-serialize.*\.unserialize|enableDefaultTyping[[:space:]]*\(|TypeNameHandling\.(All|Auto|Objects|Arrays))'
+  # yaml.load WITHOUT SafeLoader on the same line is unsafe. yaml.load(...,Loader=SafeLoader) is fine.
+  local hits
+  hits="$(printf '%s\n' "$added" | grep -iE "$bad" 2>/dev/null || true)"
+  local yaml_unsafe
+  yaml_unsafe="$(printf '%s\n' "$added" | grep -E '\byaml\.load[[:space:]]*\(' | grep -viE '(SafeLoader|safe_load)' || true)"
+  if [ -n "$hits" ] || [ -n "$yaml_unsafe" ]; then
+    die "guard: staged diff introduces an unsafe deserialiser:
+${hits}${yaml_unsafe:+
+}${yaml_unsafe}
+Use a parser that produces only plain data (json.loads / yaml.safe_load / JSON.parse without unsafe reviver / JsonSerializer.Deserialize with no type-name handling / Jackson default-typing OFF). Validate and construct domain objects manually after parsing. Full rule: skills/security-knowledge/deserialization.md"
+  fi
+}
+
+guard_no_unsafe_xml_parser() {
+  # XML parsers default to resolving external entities on most platforms.
+  # Flag any added call to a known-unsafe parser API unless the same file's
+  # added lines also include an explicit safety marker.
+  local ws="$1"
+  local files
+  files="$(git -C "$ws" diff --cached --name-only | sed '/^$/d')"
+  [ -n "$files" ] || return 0
+  local unsafe_call='((xml\.etree\.ElementTree|ElementTree|ET|etree)\.(fromstring|parse|XML|XMLParser)[[:space:]]*\(|xml\.dom\.minidom\.parse(String)?[[:space:]]*\(|xml\.sax\.parse(String)?[[:space:]]*\(|lxml\.etree\.(fromstring|parse)[[:space:]]*\(|DocumentBuilderFactory\.newInstance[[:space:]]*\(|SAXParserFactory\.newInstance[[:space:]]*\(|XMLInputFactory\.newInstance[[:space:]]*\(|new[[:space:]]+XmlDocument[[:space:]]*\(\)|new[[:space:]]+DOMDocument[[:space:]]*\(\)|Nokogiri::XML[[:space:]]*\()'
+  local safe_marker='(defusedxml|disallow-doctype-decl|DtdProcessing\.Prohibit|XmlResolver[[:space:]]*=[[:space:]]*null|\bNONET\b|resolve_entities[[:space:]]*=[[:space:]]*False|load_dtd[[:space:]]*=[[:space:]]*False|external-general-entities|external-parameter-entities|libxml_disable_entity_loader|isSupportingExternalEntities)'
+  local offender=""
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    local added
+    added="$(git -C "$ws" diff --cached -U0 -- "$f" | awk '/^\+\+\+/{next} /^\+/{sub(/^\+/,""); print}' || true)"
+    [ -n "$added" ] || continue
+    local hit
+    hit="$(printf '%s\n' "$added" | grep -nE "$unsafe_call" 2>/dev/null || true)"
+    [ -n "$hit" ] || continue
+    if ! printf '%s\n' "$added" | grep -qE "$safe_marker"; then
+      offender="${f}:
+${hit}"
+      break
+    fi
+  done <<< "$files"
+  if [ -n "$offender" ]; then
+    die "guard: staged diff invokes an XML parser without a safety configuration in the same file's added lines.
+${offender}
+Disable external entities / external DTDs / parameter entities at the parser instance, before parsing. Python: defusedxml. Java JAXP: setFeature(\"http://apache.org/xml/features/disallow-doctype-decl\", true). .NET: DtdProcessing.Prohibit + XmlResolver=null. Nokogiri: NONET. Full rule: skills/security-knowledge/xxe.md"
+  fi
+}
+
 guard_no_submodule_change() {
   # A hostile target repo could ship a fixer trick that modifies
   # .gitmodules or a submodule pointer. Reject both.
