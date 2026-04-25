@@ -82,17 +82,38 @@ REVIEW_JSON="$(jq -n \
   '{verdict:$v, reasoning:$r, at:$at}')"
 finding_set_field "$FID" "review" "$REVIEW_JSON"
 
+post_review() {
+  # GitHub blocks `gh pr review --approve` and `--request-changes` when the
+  # PR author is the authenticated user (self-review). Detect that case and
+  # fall back to a normal PR comment so the reasoning is still visible on
+  # the PR — the in-tree finding state remains the source of truth.
+  local pr_num="$1" verdict="$2" reasoning="$3"
+  local me pr_author
+  me="$(gh api user --jq .login 2>/dev/null || echo '')"
+  pr_author="$(cd "$WORKSPACE" && gh pr view "$pr_num" --json author --jq '.author.login' 2>/dev/null || echo '')"
+  local label
+  if [ "$verdict" = "approve" ]; then label="APPROVE"; else label="REQUEST CHANGES"; fi
+  local body="auto-audit independent review: $label
+
+$reasoning"
+  if [ -n "$me" ] && [ "$me" = "$pr_author" ]; then
+    # self-review path: use a comment, not a formal review
+    (cd "$WORKSPACE" && gh pr comment "$pr_num" --body "$body") || true
+  else
+    if [ "$verdict" = "approve" ]; then
+      (cd "$WORKSPACE" && gh pr review "$pr_num" --approve --body "$body") || true
+    else
+      (cd "$WORKSPACE" && gh pr review "$pr_num" --request-changes --body "$body") || true
+    fi
+  fi
+}
+
 if [ "$VERDICT" = "approve" ]; then
   finding_update_status "$FID" "pr_approved" "independent review: approved"
-  # post review comment on the pr so humans see the reasoning too
-  (cd "$WORKSPACE" && gh pr review "$PR_NUM" --approve --body "auto-audit independent review: APPROVE
-
-$REASONING") || true
+  post_review "$PR_NUM" "approve" "$REASONING"
 else
   finding_update_status "$FID" "pr_rejected" "independent review: changes requested"
-  (cd "$WORKSPACE" && gh pr review "$PR_NUM" --request-changes --body "auto-audit independent review: REQUEST CHANGES
-
-$REASONING") || true
+  post_review "$PR_NUM" "request_changes" "$REASONING"
 fi
 echo "final_status=$(finding_get "$FID" | jq -r .status)"
 ```
