@@ -56,6 +56,7 @@ jq -n \
     rescan_after_n_merges: 5,
     sandbox_mode: "strict",
     allow_network_for_repos: [],
+    audit_library_surface: false,
     initialised_at: $now
   }' > "$AUTO_AUDIT_DATA/repos/$slug/config.json"
 

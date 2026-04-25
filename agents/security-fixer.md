@@ -103,6 +103,25 @@ run_sandboxed "$WORKSPACE" npm test 2>&1 | tail -60
 
 If the suite fails in a way unrelated to your fix, **stop** and set status to `failed` with a note — this usually means the project was already broken, and fixing the broken build is out of scope.
 
+**Exception — sandbox-incompatible native dependencies.** Some Node projects ship pre-compiled native addons (`@rollup/rollup-linux-x64-gnu`, `@swc/core-linux-x64-gnu`, `esbuild` platform binaries, etc.) that the host's `node_modules` resolved against the host glibc. When mounted read-only into the sandbox container's image, those `.node` files fail to dlopen because the container's glibc is a different version (`Error: ERR_DLOPEN_FAILED`, `cannot open shared object file`, `version 'GLIBC_X.Y' not found`). This is a **structural sandbox limitation**, not a fix regression — the test code is fine, the host-built native binary just doesn't load in the sandbox image.
+
+When you observe one of those signatures in `run_sandboxed` output:
+
+```bash
+TEST_STATUS=skipped
+TEST_NOTE="sandbox-incompatible-native"
+```
+
+Record this on the finding instead of marking it `failed`:
+
+```bash
+finding_set_field "$FID" "fix.test_status" "$(jq -n --arg s "$TEST_STATUS" --arg n "$TEST_NOTE" '{status:$s, note:$n}')"
+```
+
+Continue with the fix and commit. The PR body builder picks `.fix.test_status` up so the independent reviewer sees that tests did not run for a structural reason; the reviewer is then expected to weigh the diff on its own merits.
+
+Do **not** silently fall back to running tests on the host (outside the sandbox) — the sandbox boundary is load-bearing for security. The path is "tests skipped, fixer notes why, reviewer takes the next call".
+
 If your own new test doesn't pass on the fixed code, iterate on the fix.
 
 ## Commit

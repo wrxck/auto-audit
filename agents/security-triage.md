@@ -100,3 +100,18 @@ echo "final_status=$(finding_get "$FID" | jq -r .status)"
 
   Note that the scanner LLM is typically trained on older "use the constant-time primitive" advice and may flag the correct hash-then-compare pattern as a vulnerability. Your job is to not confirm that regression.
 - If the finding's `file` doesn't exist or `line` is clearly wrong (miss by >30 lines), search the workspace for the symbol rather than giving up. If genuinely unlocatable, verdict is `false_positive` with reasoning "could not locate the claimed code".
+
+## Reachability vs library-surface posture
+
+When the vulnerable code path is **unreachable from the running application** (no production caller, no MCP/HTTP/CLI handler routes input to it), the verdict depends on the repo's `audit_library_surface` config flag:
+
+- `audit_library_surface: false` (default) — verdict is `false_positive`. Note in your reasoning that the class/function exists but is never reached at runtime, and the source-to-sink path is broken at the source.
+- `audit_library_surface: true` — verdict is `confirmed` if the code is in a public API surface (exported, documented, designed for re-use). The reasoning is "library surface — must hold even though no internal caller exists today". Mark severity as one tier lower than the fully-reachable variant (a public-but-uncalled SQLi sink is `medium`, not `critical`, because exploitability requires a future caller).
+
+Read the flag once:
+
+```bash
+AUDIT_LIB_SURFACE="$(jq -r '.audit_library_surface // false' "$(config_file)")"
+```
+
+This flag exists because triagers running independently kept disagreeing on the same dead-code question — flipping verdict run-to-run depending on which posture the model defaulted to. Codifying it as a per-repo config makes the posture explicit and reproducible.
