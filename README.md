@@ -451,3 +451,42 @@ For that reason:
 - Slack webhook for merged PRs
 - Configurable cost ceiling per session (spend limit)
 - Resumable scans (cursor) for repos that exceed the 60-file scan cap
+- PDF / DOCX / PPTX converter wired directly into `/auto-audit:report` once a dependency choice is settled (today: HTML is the canonical artefact, conversion is a one-shot follow-up via `weasyprint` / chromium / pandoc)
+- Auto-detection of merged-then-reverted PRs to feed the operator-feedback log without manual `/auto-audit:feedback` calls
+
+## Changelog
+
+Latest first. Every release is also tagged on GitHub: <https://github.com/wrxck/auto-audit/releases>.
+
+### v0.10.0 — 2026-04-26
+**Operator feedback memory loop.** New `/auto-audit:feedback` skill records a per-repo append-only log at `${repo_dir}/feedback.jsonl`. The triager and fixer subagents read it on every future tick and weigh prior signal (`fix_pattern_rejected`, `fix_pattern_approved`, `human_revert`, `triage_override`, `reviewer_disagreed`, `note`). The reviewer is **explicitly forbidden** to read it — the independent-review checkpoint stays independent. Plugin remains experimental at 0.x; 1.0.0 is reserved for an explicit stability declaration.
+
+### v0.9.0 — 2026-04-26
+**HTML audit reports.** New `/auto-audit:report` skill generates a self-contained HTML report per repo (summary stats, per-finding cards with triage / PoC / fix / PR / review detail, full activity log). Print-friendly so PDF / DOCX / PPTX conversion via `weasyprint` / chromium / pandoc is a one-shot follow-up. Three modes: active repo, named slug, `--all` (one report per repo).
+
+### v0.8.0 — 2026-04-25
+**Multi-repo support.** Drops the exclusivity gate on `/auto-audit:start`; audits coexist on disk. Each repo has its own findings dir, per-tick flock, and config. `/auto-audit:status [--all | <slug>]` and `/auto-audit:stop [<slug>]` accept optional slug arguments.
+
+### v0.7.0 — 2026-04-25
+**Three small dogfooding fixes.** `audit_library_surface` config flag makes the triager's posture on uncalled-but-public API surface explicit and reproducible. `/auto-audit:resume` eagerly recovers findings stuck mid-tick. Sandbox-incompatible-natives diagnostic records `fix.test_status = {status:"skipped", note:"sandbox-incompatible-native"}` instead of marking the finding `failed` when host-built native addons fail to dlopen in the container.
+
+### v0.6.0 — 2026-04-25
+**Security-knowledge library expansion.** Five new rules: `csprng.md`, `sql-injection.md`, `deserialization.md`, `path-canonicalization.md`, `xxe.md`. Three new paired programmatic guards: `guard_no_insecure_random`, `guard_no_unsafe_deserialize`, `guard_no_unsafe_xml_parser`. SQL-injection and path-canonicalization stay LLM-only because reliable detection needs taint analysis or has unbounded false positives. Test suite 58 → 79 assertions.
+
+### v0.5.0 — 2026-04-25
+**Dogfooding-driven UX fixes.** Reviewer self-PR fallback (uses `gh pr comment` when PR author == authenticated user). `scripts/refresh-installed.sh` repoints `installed_plugins.json` at the highest semver dir in the cache so marketplace bumps land mid-session. Stale-finding visibility in `/auto-audit:status` lists findings stuck in an intermediate stage for ≥ `AUTO_AUDIT_STALE_SECONDS` (default 600s).
+
+### v0.4.2 — 2026-04-21
+**Permission-allowlist recipe** (docs-only). Adds a path-scoped allowlist to the README so the autonomous loop can run without a per-Bash-call approval prompt on mobile / Remote Control. Existing PreToolUse hooks (git-workflow guards) still run on top.
+
+### v0.4.1 — 2026-04-20
+**Hash-then-compare rule library.** Supersedes v0.4.0. The correct rule for credential / MAC / signature comparison is to SHA3-256 hash both sides first, then compare the digests. Constant-time primitives on raw secrets (`crypto.timingSafeEqual`, `hmac.compare_digest`, `subtle.ConstantTimeCompare`, `MessageDigest.isEqual`, `secure_compare`, `fixed_length_secure_compare`, `FixedTimeEquals`, `hash_equals`, `CRYPTO_memcmp`) are themselves a known-vulnerable posture — compiler optimisations can strip the constant-time property and raw secrets' prefix structure is still present for statistical timing recovery. New `guard_no_unhashed_credential_compare` enforces this. v0.4.0 was merged to main but never distributed via the marketplace; v0.4.1 is the first published 0.4.x release.
+
+### v0.3.0 — 2026-04-19
+**README badges.** Static "audited by auto-audit" and dynamic shields.io endpoint badge that reads from the `autoaudit/status` branch on the audited repo. New `/auto-audit:badge` skill.
+
+### v0.2.0 — 2026-04-18
+**Programmatic guardrails + sandbox.** Initial set of `scripts/lib/guards.sh` checks (branch, diff size, PoC location, secrets, status transitions, untrusted input wrappers) plus `scripts/lib/sandbox.sh` for routing scraped-repo test commands through podman / docker / bubblewrap.
+
+### v0.1.0 — 2026-04-18
+**Initial import.** Five-skill plugin (`start`, `tick`, `status`, `resume`, `stop`), four agents (`security-triage`, `poc-builder`, `security-fixer`, `security-reviewer`), single-stage-per-tick lifecycle.
