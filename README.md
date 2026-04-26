@@ -49,6 +49,7 @@ Each tick advances exactly **one** finding by **one** stage. That makes the loop
 | `/auto-audit:status [--all \| <slug>]` | Status of the active repo by default. Pass a slug for a specific repo, or `--all` for a one-line summary across every repo. |
 | `/auto-audit:resume [slug]` | Resume after `/auto-audit:stop` or session restart. Eagerly recovers any findings stuck mid-tick. |
 | `/auto-audit:stop [slug]` | Drop the active-repo pointer; press Esc to cancel the `/loop`. Pass a slug to scope which repo to stop. |
+| `/auto-audit:report [--all \| <slug>]` | Generate a self-contained HTML audit report (summary stats, per-finding detail, full activity log). Output at `${repo_dir}/reports/<timestamp>.html`. Print-friendly so PDF / DOCX / PPTX conversion via `weasyprint` / chromium / pandoc is a one-shot follow-up. |
 
 ## Arguments
 
