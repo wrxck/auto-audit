@@ -50,6 +50,7 @@ Each tick advances exactly **one** finding by **one** stage. That makes the loop
 | `/auto-audit:resume [slug]` | Resume after `/auto-audit:stop` or session restart. Eagerly recovers any findings stuck mid-tick. |
 | `/auto-audit:stop [slug]` | Drop the active-repo pointer; press Esc to cancel the `/loop`. Pass a slug to scope which repo to stop. |
 | `/auto-audit:report [--all \| <slug>]` | Generate a self-contained HTML audit report (summary stats, per-finding detail, full activity log). Output at `${repo_dir}/reports/<timestamp>.html`. Print-friendly so PDF / DOCX / PPTX conversion via `weasyprint` / chromium / pandoc is a one-shot follow-up. |
+| `/auto-audit:feedback <kind> <note> [json-extra]` | Record operator feedback against the active repo. Kinds: `fix_pattern_rejected`, `fix_pattern_approved`, `human_revert`, `triage_override`, `reviewer_disagreed`, `note`. Triager and fixer subagents read the log on every future tick and weigh past entries; the **reviewer does not read it** to preserve independent-review. |
 
 ## Arguments
 
@@ -122,6 +123,7 @@ We do not claim 100% safety. An LLM is not a hardened security boundary, and jud
 | Fixer gives up after N attempts | fixer role card notes the cap | `scripts/finding-attempts.sh` increments before each attempt; tick reads the counter and marks `failed` at the cap |
 | Only one tick runs at a time per repo | — | `with_lock` uses `flock(1)` — atomic claim, kernel-released on process death |
 | Concurrent scans cannot clobber finding IDs | — | `finding_create` allocates IDs under a directory-level flock |
+| Operator-feedback memory does not bias the independent-review checkpoint | reviewer role card: "do not read feedback.jsonl"; triager and fixer role cards: "do read feedback.jsonl" | — (judgement call — there is no mechanical way to verify a subagent did not open a file it had Read access to. The reviewer's tools list is the same as before; the rule is enforced at the LLM layer.) |
 
 Cells marked `—` on the programmatic side are genuine judgement calls. Those live entirely at the LLM layer, which is why **`merge_policy=manual` is the default** — the plugin does not merge anything without a human look when the last line of defence is an LLM.
 
