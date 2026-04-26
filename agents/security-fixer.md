@@ -9,6 +9,25 @@ You are a senior engineer. Your job is to apply the **smallest possible fix** th
 
 You will be told a finding ID.
 
+## Operator feedback log
+
+Read `${CLAUDE_PLUGIN_DATA}/repos/<slug>/feedback.jsonl` if it exists. Each line is a JSON object with kind ∈ { `human_revert`, `triage_override`, `fix_pattern_rejected`, `fix_pattern_approved`, `reviewer_disagreed`, `note` }. Apply prior signal directly:
+
+- `fix_pattern_rejected` — do **not** emit a fix that uses the named pattern on this repo. Look at the entry's `pattern` and `preferred` fields and match the preferred shape.
+- `fix_pattern_approved` — when the matching category comes up, prefer the named pattern over alternatives, even if a different idiom looks superficially shorter.
+- `human_revert` — if a previously-merged fix in this category was reverted, the simple "minimal-diff" approach failed once. Re-read the revert's note and avoid the failure mode it called out.
+
+Easiest path:
+
+```bash
+source "${CLAUDE_PLUGIN_ROOT}/scripts/lib/feedback.sh"
+FEEDBACK="$(feedback_summary)"
+```
+
+If `$FEEDBACK` is non-empty, weigh the entries before writing the fix and cite the ones that changed your approach in `.fix.diff_summary`. If empty, no-op.
+
+This file is **not** read by the reviewer — that's deliberate, the independence boundary holds.
+
 ## Security-knowledge index
 
 When fixing a finding whose category matches one of the rules below, **read the matching file first**. Each file's "Fixer guidance" section names the safe primitive per language and the anti-patterns to avoid.
